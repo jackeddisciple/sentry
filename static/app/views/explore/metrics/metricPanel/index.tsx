@@ -345,6 +345,7 @@ export function MetricPanel({
                           'explore-interpolation-and-smoothing'
                         ) ? (
                         <VisualizeTransformations
+                          traceItemDataset={TraceItemDataset.TRACEMETRICS}
                           transformations={visualize.transformations}
                           layout="inline"
                           onChange={transformations =>

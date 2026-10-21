@@ -3,19 +3,32 @@ import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary';
 
+import {TrackingContextProvider} from '@sentry/scraps/trackingContext';
+
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {TraceItemDataset} from 'sentry/views/explore/types';
+
 import {VisualizeTransformations} from './visualizeTransformations';
+
+jest.mock('sentry/utils/analytics');
 
 function Example({
   initial = [],
   layout,
+  traceItemDataset = TraceItemDataset.SPANS,
 }: {
   initial?: string[];
   layout?: 'stacked' | 'inline';
+  traceItemDataset?:
+    | TraceItemDataset.SPANS
+    | TraceItemDataset.LOGS
+    | TraceItemDataset.TRACEMETRICS;
 }) {
   const [transformations, setTransformations] = useState<readonly string[]>(initial);
   return (
     <div>
       <VisualizeTransformations
+        traceItemDataset={traceItemDataset}
         transformations={transformations}
         onChange={setTransformations}
         layout={layout}
@@ -37,6 +50,99 @@ function Example({
 describe('VisualizeTransformations', () => {
   const organization = OrganizationFixture({
     features: ['explore-interpolation-and-smoothing'],
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it.each<TraceItemDataset.SPANS | TraceItemDataset.LOGS | TraceItemDataset.TRACEMETRICS>(
+    [TraceItemDataset.SPANS, TraceItemDataset.LOGS, TraceItemDataset.TRACEMETRICS]
+  )('tracks transformation interactions for %s', async traceItemDataset => {
+    const tracking = jest.fn();
+    render(
+      <TrackingContextProvider value={tracking}>
+        <Example
+          traceItemDataset={traceItemDataset}
+          layout={
+            traceItemDataset === TraceItemDataset.TRACEMETRICS ? 'inline' : 'stacked'
+          }
+        />
+      </TrackingContextProvider>,
+      {organization}
+    );
+
+    expect(trackAnalytics).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', {name: 'Add Transformation'}));
+    await userEvent.click(screen.getByRole('option', {name: 'Fill'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Fill method'}));
+    await userEvent.click(screen.getByRole('option', {name: 'LOCF'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Transformation type'}));
+    await userEvent.click(screen.getByRole('option', {name: 'Smooth'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Smoothing method'}));
+    await userEvent.click(screen.getByRole('option', {name: 'EMA'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Window Size'}));
+    await userEvent.click(screen.getByRole('option', {name: '4'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Smoothing Factor'}));
+    await userEvent.click(screen.getByRole('option', {name: '75%'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Add Transformation'}));
+    await userEvent.click(screen.getByRole('option', {name: 'Fill'}));
+    const firstRow = screen.getByRole('group', {name: 'Transformation 1'});
+    await userEvent.click(
+      within(firstRow).getByRole('button', {name: 'Transformation type'})
+    );
+    await userEvent.click(screen.getByRole('option', {name: 'Fill'}));
+    await userEvent.click(
+      within(firstRow).getByRole('button', {name: 'Remove transformation'})
+    );
+
+    const expectedEvents: Array<[string, Record<string, string | number>]> = [
+      ['added', {transformation_index: 0, transformation_type: 'fill'}],
+      [
+        'method_changed',
+        {transformation_index: 0, transformation_type: 'fill', method: 'locf'},
+      ],
+      [
+        'type_changed',
+        {transformation_index: 0, previous_type: 'fill', transformation_type: 'smooth'},
+      ],
+      [
+        'method_changed',
+        {transformation_index: 0, transformation_type: 'smooth', method: 'ema'},
+      ],
+      ['window_changed', {transformation_index: 0, method: 'ema', window: 4}],
+      ['factor_changed', {transformation_index: 0, factor: 0.75}],
+      ['added', {transformation_index: 1, transformation_type: 'fill'}],
+      [
+        'reordered',
+        {
+          transformation_index: 0,
+          transformation_type: 'smooth',
+          target_type: 'fill',
+          target_index: 1,
+        },
+      ],
+    ];
+    expect(trackAnalytics).toHaveBeenCalledTimes(8);
+    expectedEvents.forEach(([event, params], index) => {
+      expect(trackAnalytics).toHaveBeenNthCalledWith(
+        index + 1,
+        `explore.visualize.transformation.${event}`,
+        {organization, traceItemDataset, ...params}
+      );
+    });
+    expect(tracking).toHaveBeenCalledWith(
+      expect.objectContaining({
+        analyticsEventKey: 'explore.visualize.transformation.removed',
+        analyticsEventName: 'Explore: Visualize Transformation Removed',
+        analyticsParams: expect.objectContaining({
+          traceItemDataset,
+          transformation_index: 0,
+          transformation_type: 'fill',
+        }),
+      })
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('["smooth(ema,4,0.75)"]');
   });
 
   it('composes inline controls while preserving defaults, swaps and removal', async () => {

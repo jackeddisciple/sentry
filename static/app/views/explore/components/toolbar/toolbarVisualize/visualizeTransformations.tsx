@@ -9,8 +9,11 @@ import {Text} from '@sentry/scraps/text';
 
 import {PageFilterBar} from 'sentry/components/pageFilters/pageFilterBar';
 import {t} from 'sentry/locale';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {exploreAnalyticsEventMap} from 'sentry/utils/analytics/exploreAnalyticsEvents';
 import {parseFunction} from 'sentry/utils/discover/fields';
 import {useOrganization} from 'sentry/utils/useOrganization';
+import type {TraceItemDataset} from 'sentry/views/explore/types';
 
 type FillMethod = 'zero' | 'locf' | 'linear';
 type SmoothMethod = 'sma' | 'ema' | 'asap';
@@ -101,6 +104,10 @@ function defaultSmooth(method: SmoothMethod, window = 10): Transformation {
 
 interface Props {
   onChange: (transformations: readonly string[]) => void;
+  traceItemDataset:
+    | TraceItemDataset.SPANS
+    | TraceItemDataset.LOGS
+    | TraceItemDataset.TRACEMETRICS;
   transformations: readonly string[];
   children?: (parts: {
     addTrigger: React.ReactNode;
@@ -112,6 +119,7 @@ interface Props {
 export function VisualizeTransformations({
   transformations,
   onChange,
+  traceItemDataset,
   children,
   layout = 'stacked',
 }: Props) {
@@ -129,6 +137,7 @@ export function VisualizeTransformations({
     <Stack gap="sm">
       {transformations.map((raw, index) => {
         const transformation = parseTransformation(raw);
+        const analyticsParams = {traceItemDataset, transformation_index: index};
         const replace = (value: Transformation) =>
           onChange(transformations.toSpliced(index, 1, serializeTransformation(value)));
 
@@ -159,7 +168,17 @@ export function VisualizeTransformations({
                     {transformation.window === undefined ? t('Auto') : props.children}
                   </OverlayTrigger.Button>
                 )}
-                onChange={({value}) => replace({...transformation, window: value})}
+                onChange={({value}) => {
+                  if (value !== transformation.window) {
+                    trackAnalytics('explore.visualize.transformation.window_changed', {
+                      organization,
+                      ...analyticsParams,
+                      method: transformation.method,
+                      window: value,
+                    });
+                  }
+                  replace({...transformation, window: value});
+                }}
               />
             </Flex>
             {transformation.method === 'ema' && (
@@ -179,7 +198,16 @@ export function VisualizeTransformations({
                       {transformation.factor === undefined ? t('Auto') : props.children}
                     </OverlayTrigger.Button>
                   )}
-                  onChange={({value}) => replace({...transformation, factor: value})}
+                  onChange={({value}) => {
+                    if (value !== transformation.factor) {
+                      trackAnalytics('explore.visualize.transformation.factor_changed', {
+                        organization,
+                        ...analyticsParams,
+                        factor: value,
+                      });
+                    }
+                    replace({...transformation, factor: value});
+                  }}
                 />
               </Flex>
             )}
@@ -220,6 +248,13 @@ export function VisualizeTransformations({
                         );
                         const otherTransformation = transformations[otherIndex];
                         if (otherTransformation !== undefined) {
+                          trackAnalytics('explore.visualize.transformation.reordered', {
+                            organization,
+                            ...analyticsParams,
+                            transformation_type: transformation.kind,
+                            target_type: value,
+                            target_index: otherIndex,
+                          });
                           onChange(
                             transformations
                               .toSpliced(index, 1, otherTransformation)
@@ -227,6 +262,12 @@ export function VisualizeTransformations({
                           );
                           return;
                         }
+                        trackAnalytics('explore.visualize.transformation.type_changed', {
+                          organization,
+                          ...analyticsParams,
+                          previous_type: transformation.kind,
+                          transformation_type: value,
+                        });
                         replace(
                           value === 'fill'
                             ? {kind: 'fill', method: 'zero'}
@@ -244,9 +285,20 @@ export function VisualizeTransformations({
                             aria-label={t('Fill method')}
                           />
                         )}
-                        onChange={({value}) =>
-                          replace({...transformation, method: value})
-                        }
+                        onChange={({value}) => {
+                          if (value !== transformation.method) {
+                            trackAnalytics(
+                              'explore.visualize.transformation.method_changed',
+                              {
+                                organization,
+                                ...analyticsParams,
+                                transformation_type: 'fill',
+                                method: value,
+                              }
+                            );
+                          }
+                          replace({...transformation, method: value});
+                        }}
                       />
                     ) : (
                       <CompactSelect
@@ -260,6 +312,15 @@ export function VisualizeTransformations({
                         )}
                         onChange={({value}) => {
                           if (value !== transformation.method) {
+                            trackAnalytics(
+                              'explore.visualize.transformation.method_changed',
+                              {
+                                organization,
+                                ...analyticsParams,
+                                transformation_type: 'smooth',
+                                method: value,
+                              }
+                            );
                             replace(defaultSmooth(value, transformation.window));
                           }
                         }}
@@ -276,6 +337,15 @@ export function VisualizeTransformations({
                 size="zero"
                 icon={<IconDelete size="sm" />}
                 aria-label={t('Remove transformation')}
+                analyticsEventKey="explore.visualize.transformation.removed"
+                analyticsEventName={
+                  exploreAnalyticsEventMap['explore.visualize.transformation.removed'] ??
+                  undefined
+                }
+                analyticsParams={{
+                  ...analyticsParams,
+                  transformation_type: transformation?.kind ?? 'unsupported',
+                }}
                 onClick={() => onChange(transformations.toSpliced(index, 1))}
               />
             </Flex>
@@ -296,14 +366,20 @@ export function VisualizeTransformations({
           {t('Add Transformation')}
         </OverlayTrigger.Button>
       )}
-      onChange={({value}) =>
+      onChange={({value}) => {
+        trackAnalytics('explore.visualize.transformation.added', {
+          organization,
+          traceItemDataset,
+          transformation_index: transformations.length,
+          transformation_type: value,
+        });
         onChange([
           ...transformations,
           serializeTransformation(
             value === 'fill' ? {kind: 'fill', method: 'zero'} : defaultSmooth('sma')
           ),
-        ])
-      }
+        ]);
+      }}
     />
   );
 
