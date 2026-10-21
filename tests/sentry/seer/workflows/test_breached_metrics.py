@@ -6,14 +6,11 @@ from datetime import timedelta
 from unittest import mock
 from uuid import uuid4
 
-from django.utils import timezone
-
 from sentry.eventstream.base import GroupState
 from sentry.incidents.grouptype import MetricIssue
 from sentry.incidents.models.alert_rule import AlertRuleDetectionType
 from sentry.incidents.utils.types import DATA_SOURCE_SNUBA_QUERY_SUBSCRIPTION
-from sentry.models.groupopenperiod import GroupOpenPeriod, create_open_period
-from sentry.models.groupopenperiodactivity import GroupOpenPeriodActivity, OpenPeriodActivityType
+from sentry.models.groupopenperiod import GroupOpenPeriod
 from sentry.models.project import Project
 from sentry.seer.models.workflow import (
     SeerWorkflowConfig,
@@ -56,9 +53,6 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
             message="Example error spike",
             create_open_period=False,
         )
-        create_open_period(self.group, timezone.now() - timedelta(minutes=5))
-        self.open_period = GroupOpenPeriod.objects.get(group=self.group, date_ended__isnull=True)
-        self.open_period.update(date_started=timezone.now() - timedelta(minutes=5))
         query = create_snuba_query(
             query_type=SnubaQuery.Type.ERROR,
             dataset=Dataset.Events,
@@ -120,12 +114,14 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         self.detector.update(name="Edited after breach")
         self.condition.update(comparison=200)
 
-        retried = self.accept(self.breach_event(value=240))
+        other_event = self.breach_event(value=240)
+        assert other_event.event_id != event.event_id
+        retried = self.accept(other_event)
 
         assert retried is not None
         assert retried.id == run.id
         run.refresh_from_db()
-        assert run.trigger_open_period_id == self.open_period.id
+        assert run.trigger_key == f"issue_created:{self.group.id}"
         assert run.extras["trigger"] == trigger
         assert trigger["evidence"]["value"] == 180
         assert run.extras["config_version"] == self.config.version
@@ -133,6 +129,44 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert run.date_completed is not None
         assert run.executions.get().extras == {"status": "complete", "result": "noop"}
         assert SeerWorkflowRun.objects.count() == 1
+
+    def test_new_issue_without_an_open_period_can_start_a_run(self) -> None:
+        event = self.breach_event()
+        assert not GroupOpenPeriod.objects.filter(group=self.group).exists()
+
+        self.process_breach_workflow(event)
+
+        run = SeerWorkflowRun.objects.get(workflow_config=self.config)
+        assert run.trigger_key == f"issue_created:{self.group.id}"
+        assert run.executions.get().extras == {"status": "complete", "result": "noop"}
+
+    def test_same_issue_can_start_runs_for_different_automations(self) -> None:
+        action = self.create_action(type=Action.Type.SEER_WORKFLOW)
+        self.create_data_condition_group_action(
+            action=action, condition_group=self.action_conditions
+        )
+        config = Factories.create_seer_workflow_config(
+            self.organization,
+            strategy=SeerWorkflowStrategy.BREACHED_METRIC_INVESTIGATION,
+            enabled=True,
+            filters={"all_projects": True},
+            trigger_actions=[action],
+        )
+        event = self.breach_event()
+
+        first = self.accept(event)
+        second = accept_metric_breach(
+            self.group,
+            event,
+            config_id=config.id,
+            origin=MetricBreachWorkflowOrigin(self.workflow.id, action.id),
+        )
+
+        assert first is not None
+        assert isinstance(second, AcceptedMetricBreach)
+        assert first.id != second.run.id
+        assert first.trigger_key == second.run.trigger_key == f"issue_created:{self.group.id}"
+        assert SeerWorkflowRunExecution.objects.count() == 2
 
     def test_shared_action_reuses_run_across_workflows_and_keeps_first_origin(self) -> None:
         other_workflow = self.create_workflow(organization=self.organization)
@@ -247,7 +281,11 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         self.create_detector_workflow(workflow=self.workflow, detector=detector)
         self.process_breach_workflow(self.breach_event())
         self.process_breach_workflow(event)
-        assert SeerWorkflowRun.objects.filter(workflow_config=self.config).count() == 2
+        assert set(
+            SeerWorkflowRun.objects.filter(workflow_config=self.config).values_list(
+                "trigger_key", flat=True
+            )
+        ) == {f"issue_created:{self.group.id}", f"issue_created:{event.group_id}"}
         assert SeerWorkflowRunExecution.objects.count() == 2
 
     def test_disconnected_monitor_does_not_start_a_run(self) -> None:
@@ -491,7 +529,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         run = SeerWorkflowRun.objects.get()
         assert result.run.id == run.id
         assert run.workflow_config_id == self.config.id
-        assert run.trigger_open_period_id == self.open_period.id
+        assert run.trigger_key == f"issue_created:{self.group.id}"
         assert run.date_completed is not None
         assert run.extras["status"] == "rejected"
         assert run.extras["admission"]["status"] == "rejected"
@@ -680,9 +718,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         group = self.create_group(
             project=project, type=MetricIssue.type_id, create_open_period=False
         )
-        create_open_period(group, timezone.now() - timedelta(minutes=5))
         self.create_detector_group(detector=detector, group=group)
-        period = GroupOpenPeriod.objects.get(group=group, date_ended__isnull=True)
         event = self.breach_event()
         assert event.occurrence is not None
         occurrence = self.build_occurrence(
@@ -691,10 +727,6 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
             type=MetricIssue.type_id,
             evidence_data={**event.occurrence.evidence_data, "detector_id": detector.id},
         )
-        GroupOpenPeriodActivity.objects.filter(
-            group_open_period=period,
-            type=OpenPeriodActivityType.OPENED,
-        ).update(event_id=event.event_id)
         stored = self.store_event(
             data={"event_id": event.event_id, "environment": self.environment.name},
             project_id=project.id,
@@ -704,10 +736,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         group_event.occurrence = occurrence
         return group_event, detector
 
-    def breach_event(
-        self, *, open_period: GroupOpenPeriod | None = None, value: int = 180
-    ) -> GroupEvent:
-        period = open_period or self.open_period
+    def breach_event(self, *, value: int = 180) -> GroupEvent:
         event_id = uuid4().hex
         occurrence = self.build_occurrence(
             event_id=event_id,
@@ -725,10 +754,6 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
                 ],
             },
         )
-        GroupOpenPeriodActivity.objects.filter(
-            group_open_period=period,
-            type=OpenPeriodActivityType.OPENED,
-        ).update(event_id=event_id)
         occurrence.save()
         event = self.store_event(
             data={"event_id": event_id, "environment": self.environment.name},

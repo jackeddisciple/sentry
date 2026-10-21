@@ -419,12 +419,13 @@ class OrganizationSeerWorkflowsTest(APITestCase):
         run = Factories.create_seer_workflow_run(
             self.organization,
             workflow_config=config,
+            trigger_key="issue_created:123",
             extras={"status": "complete", "trigger": {"invocation_source": "wfe"}},
         )
         config.delete()
         run.refresh_from_db()
         assert run.workflow_config_id is None
-        assert run.trigger_open_period_id is None
+        assert run.trigger_key == "issue_created:123"
 
         with self.feature("organizations:seer-night-shift"):
             response = self.get_success_response(self.organization.slug)

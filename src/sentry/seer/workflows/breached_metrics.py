@@ -12,7 +12,6 @@ from sentry import features
 from sentry.constants import ObjectStatus
 from sentry.incidents.grouptype import MetricIssue
 from sentry.models.group import Group
-from sentry.models.groupopenperiodactivity import GroupOpenPeriodActivity, OpenPeriodActivityType
 from sentry.seer.models.workflow import (
     SeerWorkflowConfig,
     SeerWorkflowRun,
@@ -61,7 +60,6 @@ class RejectedMetricBreach:
 
 class MetricBreachTrigger(BaseModel):
     event_id: str
-    open_period_id: PositiveInt
     occurrence_id: str
     detector_id: PositiveInt
     evidence: dict[str, Any]
@@ -97,22 +95,9 @@ def accept_metric_breach(
         return IgnoredMetricBreach("invalid_source")
     if not features.has("organizations:seer-automations", group.organization):
         return IgnoredMetricBreach("feature_disabled")
-    opened = (
-        GroupOpenPeriodActivity.objects.filter(
-            group_open_period__group=group,
-            type=OpenPeriodActivityType.OPENED,
-            event_id=event.event_id,
-        )
-        .select_related("group_open_period")
-        .first()
-    )
-    if opened is None:
-        return IgnoredMetricBreach("invalid_source")
-    period = opened.group_open_period
     try:
         trigger = MetricBreachTrigger(
             event_id=event.event_id,
-            open_period_id=period.id,
             occurrence_id=occurrence.id,
             detector_id=occurrence.evidence_data.get("detector_id"),
             evidence=dict(occurrence.evidence_data),
@@ -150,10 +135,11 @@ def accept_metric_breach(
         ):
             return IgnoredMetricBreach("workflow_unavailable")
         attempt_id = f"event:{event.event_id}"
+        trigger_key = f"issue_created:{group.id}"
         runs = SeerWorkflowRun.objects.filter(
             organization_id=group.organization.id,
             workflow_config=config,
-            trigger_open_period=period,
+            trigger_key=trigger_key,
         )
         previous_attempt = runs.filter(extras__admission__request_id=attempt_id).first()
         if previous_attempt is not None and previous_attempt.extras["status"] == "rejected":
@@ -170,7 +156,7 @@ def accept_metric_breach(
             run = SeerWorkflowRun.objects.create(
                 organization_id=group.organization.id,
                 workflow_config=config,
-                trigger_open_period=period,
+                trigger_key=trigger_key,
                 date_completed=decided_at,
                 extras={
                     "status": "rejected" if reason is not None else "complete",
