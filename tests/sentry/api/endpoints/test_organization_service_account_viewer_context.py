@@ -36,8 +36,9 @@ class OrganizationServiceAccountViewerContextTest(APITestCase):
 
         assert response.status_code == 200
         returned = decode_viewer_context(response.data["viewerContext"])
+        assert isinstance(returned, ViewerContext)
         assert returned.organization_id == self.organization.id
-        assert returned.user_id is None
+        assert returned.actor.actor_id is None
 
     def test_rejects_viewer_context_for_other_org(self) -> None:
         other_org = self.create_organization()

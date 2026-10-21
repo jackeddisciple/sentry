@@ -40,12 +40,7 @@ from sentry.apidocs.parameters import GlobalParams
 from sentry.apidocs.utils import inline_sentry_response_serializer
 from sentry.models.organization import Organization
 from sentry.seer.auth import SeerRpcViewerContextAuthentication
-from sentry.viewer_context import (
-    Actor,
-    ActorType,
-    ViewerContext,
-    encode_viewer_context,
-)
+from sentry.viewer_context import Actor, ActorType, ViewerContext, encode_viewer_context
 
 
 class ServiceAccountViewerContextResponse(TypedDict):
@@ -62,7 +57,11 @@ class SeerSystemViewerContextPermission(BasePermission):
 
     def has_object_permission(self, request: Request, view: object, obj: Organization) -> bool:
         vc = getattr(request, "_seer_rpc_viewer_context", None)
-        return vc is not None and vc.user_id is None and vc.organization_id == obj.id
+        if vc is None:
+            return False
+        actor = vc.actor
+        user_id = actor.actor_id if actor.type == ActorType.USER else actor.delegated_user_id
+        return user_id is None and vc.organization_id == obj.id
 
 
 @cell_silo_endpoint
@@ -94,7 +93,7 @@ class OrganizationServiceAccountViewerContextEndpoint(OrganizationEndpoint):
 
         ttl = getattr(settings, "VIEWER_CONTEXT_JWT_TTL", 900)
         viewer_context = encode_viewer_context(
-            ViewerContext(actor=Actor(type=ActorType.SYSTEM), organization_id=organization.id),
+            ViewerContext(organization_id=organization.id, actor=Actor(type=ActorType.SYSTEM)),
             ttl=ttl,
         )
         response: ServiceAccountViewerContextResponse = {
