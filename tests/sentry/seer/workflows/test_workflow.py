@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import pytest
+from django.core.cache import cache
 
 from sentry.constants import ObjectStatus
 from sentry.models.organization import Organization
@@ -12,8 +13,13 @@ from sentry.seer.models.workflow import (
     SeerWorkflowStrategy,
 )
 from sentry.seer.workflows.workflow import AllProjects, SeerWorkflow, SelectedProjects
+from sentry.service_accounts.models import ServiceAccount
+from sentry.service_accounts.services.service_account import RpcServiceAccount
+from sentry.service_accounts.services.service_account.service import service_account_service
 from sentry.testutils.cases import TestCase
 from sentry.testutils.factories import Factories
+from sentry.testutils.outbox import outbox_runner
+from sentry.testutils.silo import assume_test_silo_mode_of, cell_silo_test
 
 
 class SeerWorkflowEnsureDefaultsTest(TestCase):
@@ -177,3 +183,167 @@ class SeerWorkflowProjectSelectionTest(TestCase):
         for project in selected:
             Factories.create_seer_workflow_config_project(config, project)
         return config
+
+
+@cell_silo_test
+class SeerWorkflowServiceAccountTest(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        cache.clear()
+        self.account = Factories.create_service_account(
+            self.organization, scope_list=["org:read", "project:read"]
+        )
+        self.config = Factories.create_seer_workflow_config(
+            self.organization,
+            strategy=SeerWorkflowStrategy.AGENTIC_TRIAGE_V2,
+            filters={"environments": ["production"]},
+            output_policy={"review": True},
+        )
+        self.workflow = SeerWorkflow(self.config)
+
+    def test_assigns_account_to_independent_configurations(self) -> None:
+        other = Factories.create_seer_workflow_config(
+            self.organization, strategy=SeerWorkflowStrategy.AGENTIC_TRIAGE_V2
+        )
+
+        self.workflow.set_service_account(self.account.id)
+
+        self.config.refresh_from_db()
+        other.refresh_from_db()
+        assert self.config.service_account_id == self.account.id
+        assert self.config.version == self.workflow.config.version == 2
+        assert other.service_account_id is None
+        assert other.version == 1
+
+        SeerWorkflow(other).set_service_account(self.account.id)
+        other.refresh_from_db()
+        assert other.service_account_id == self.config.service_account_id
+
+    def test_replaces_account_preserving_latest_settings_and_version(self) -> None:
+        self.workflow.set_service_account(self.account.id)
+        replacement = Factories.create_service_account(self.organization)
+        SeerWorkflowConfig.objects.filter(id=self.config.id, organization=self.organization).update(
+            filters={"all_projects": True}, enabled=True, version=4
+        )
+
+        self.workflow.set_service_account(replacement.id)
+
+        self.config.refresh_from_db()
+        assert self.config.service_account_id == replacement.id
+        assert self.config.version == self.workflow.config.version == 5
+        assert self.config.filters == {"all_projects": True}
+        assert self.config.output_policy == {"review": True}
+        assert self.config.enabled is True
+
+    def test_no_op_assignment_preserves_version_and_timestamp(self) -> None:
+        self.workflow.set_service_account(self.account.id)
+        timestamp = self.workflow.config.date_updated
+
+        self.workflow.set_service_account(self.account.id)
+
+        self.config.refresh_from_db()
+        assert self.config.version == self.workflow.config.version == 2
+        assert self.config.date_updated == timestamp
+
+    def test_clear_does_not_look_up_former_account(self) -> None:
+        self.workflow.set_service_account(self.account.id)
+
+        with patch.object(service_account_service, "get") as get_account:
+            self.workflow.set_service_account(None)
+            timestamp = self.workflow.config.date_updated
+            self.workflow.set_service_account(None)
+
+        get_account.assert_not_called()
+        self.config.refresh_from_db()
+        assert self.config.service_account_id is None
+        assert self.config.version == self.workflow.config.version == 3
+        assert self.config.date_updated == timestamp
+        assert self.config.filters == {"environments": ["production"]}
+
+    def test_rejects_missing_account(self) -> None:
+        self.assert_account_rejected(None, "does not exist")
+
+    def test_rejects_inactive_account(self) -> None:
+        self.assert_account_rejected(
+            RpcServiceAccount(
+                id=self.account.id, organization_id=self.organization.id, is_active=False
+            ),
+            "inactive",
+        )
+
+    def test_rejects_cross_organization_account(self) -> None:
+        self.assert_account_rejected(
+            RpcServiceAccount(
+                id=self.account.id, organization_id=self.organization.id + 1, is_active=True
+            ),
+            "must belong to the workflow's organization",
+        )
+
+    def assert_account_rejected(self, account: RpcServiceAccount | None, message: str) -> None:
+        self.workflow.set_service_account(self.account.id)
+
+        with (
+            patch.object(service_account_service, "get", return_value=account),
+            pytest.raises(ValueError, match=message),
+        ):
+            self.workflow.set_service_account(self.account.id)
+        with (
+            patch.object(service_account_service, "get", return_value=account),
+            pytest.raises(ValueError, match=message),
+        ):
+            self.workflow.resolve_service_account()
+
+        self.config.refresh_from_db()
+        assert self.config.service_account_id == self.account.id
+        assert self.config.version == 2
+
+    def test_lookup_failure_does_not_mutate_config(self) -> None:
+        self.workflow.set_service_account(self.account.id)
+        with (
+            patch.object(service_account_service, "get", side_effect=RuntimeError("RPC failed")),
+            pytest.raises(RuntimeError, match="RPC failed"),
+        ):
+            self.workflow.set_service_account(self.account.id)
+        with (
+            patch.object(service_account_service, "get", side_effect=RuntimeError("RPC failed")),
+            pytest.raises(RuntimeError, match="RPC failed"),
+        ):
+            self.workflow.resolve_service_account()
+
+        self.config.refresh_from_db()
+        assert self.config.service_account_id == self.account.id
+        assert self.config.version == 2
+
+    def test_unset_association_fails_without_lookup(self) -> None:
+        with (
+            patch.object(service_account_service, "get") as get_account,
+            pytest.raises(ValueError, match="no service account configured"),
+        ):
+            self.workflow.resolve_service_account()
+
+        get_account.assert_not_called()
+
+    def test_resolves_current_account_state_after_invalidation(self) -> None:
+        self.workflow.set_service_account(self.account.id)
+        resolved = self.workflow.resolve_service_account()
+        assert resolved.id == self.account.id
+        assert resolved.organization_id == self.organization.id
+        assert resolved.scope_list == ["org:read", "project:read"]
+
+        with assume_test_silo_mode_of(ServiceAccount), outbox_runner():
+            self.account.update(is_active=False)
+
+        with pytest.raises(ValueError, match="inactive"):
+            self.workflow.resolve_service_account()
+
+    def test_rejects_deleted_account_before_association_cleanup(self) -> None:
+        self.workflow.set_service_account(self.account.id)
+        assert self.workflow.resolve_service_account().id == self.account.id
+
+        with assume_test_silo_mode_of(ServiceAccount), outbox_runner():
+            self.account.delete()
+
+        self.config.refresh_from_db()
+        assert self.config.service_account_id is not None
+        with pytest.raises(ValueError, match="does not exist"):
+            self.workflow.resolve_service_account()

@@ -532,7 +532,7 @@ class ExhaustiveFixtures(Fixtures):
         )
 
         # Auth*
-        self.create_exhaustive_organization_auth(owner, org, project)
+        service_account = self.create_exhaustive_organization_auth(owner, org, project)
 
         # Integration*
         org_integration = self.create_exhaustive_organization_integration(org)
@@ -659,6 +659,7 @@ class ExhaustiveFixtures(Fixtures):
         seer_workflow_config = SeerWorkflowConfig.objects.create(
             organization=org,
             strategy=SeerWorkflowStrategy.AGENTIC_TRIAGE_V2,
+            service_account_id=service_account.id,
             filters={"environments": ["production"]},
         )
         SeerWorkflowConfigProject.objects.create(config=seer_workflow_config, project=project)
@@ -876,7 +877,9 @@ class ExhaustiveFixtures(Fixtures):
         return org
 
     @assume_test_silo_mode(SiloMode.CONTROL)
-    def create_exhaustive_organization_auth(self, owner: User, org: Organization, project: Project):
+    def create_exhaustive_organization_auth(
+        self, owner: User, org: Organization, project: Project
+    ) -> ServiceAccount:
         ApiKey.objects.create(key=uuid4().hex, organization_id=org.id)
         auth_provider = AuthProvider.objects.create(organization_id=org.id, provider="sentry")
         AuthIdentity.objects.create(
@@ -907,6 +910,7 @@ class ExhaustiveFixtures(Fixtures):
             created_by=owner,
         )
         ServiceAccountProject.objects.create(service_account=service_account, project_id=project.id)
+        return service_account
 
     @assume_test_silo_mode(SiloMode.CONTROL)
     def create_exhaustive_organization_integration(self, org: Organization):

@@ -58,6 +58,8 @@ class SeerWorkflowConfigTest(TestCase):
             )
             == legacy
         )
+        assert legacy.service_account_id is None
+        assert v2_configs[0].service_account_id is None
 
 
 def test_filters_default_to_selected_projects_in_all_environments() -> None:

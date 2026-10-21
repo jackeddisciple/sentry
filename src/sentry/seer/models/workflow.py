@@ -11,6 +11,7 @@ from sentry.db.models import (
     sane_repr,
 )
 from sentry.db.models.base import DefaultFieldsModel
+from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignKey
 
 
 class SeerWorkflowStrategy(models.TextChoices):
@@ -60,6 +61,9 @@ class SeerWorkflowConfig(DefaultFieldsModel):
     __relocation_scope__ = RelocationScope.Organization
 
     organization = FlexibleForeignKey("sentry.Organization", on_delete=models.CASCADE)
+    service_account_id = HybridCloudForeignKey(
+        "service_accounts.ServiceAccount", null=True, blank=True, on_delete="SET_NULL"
+    )
     strategy = models.CharField(max_length=256, choices=SeerWorkflowStrategy.choices)
     enabled = models.BooleanField(default=False)
     schedule = models.CharField(
@@ -67,7 +71,7 @@ class SeerWorkflowConfig(DefaultFieldsModel):
     )
     # Metadata in the shape of SeerWorkflowConfigExtras.
     extras = models.JSONField(db_default={}, default=dict)
-    # Incremented on every saved change, so runs can record which configuration they used.
+    # Incremented on explicit saved changes; asynchronous HCFK cleanup bypasses versioning.
     version = BoundedPositiveIntegerField(default=1, db_default=1)
     # Which work to pick, in the shape of SeerWorkflowFilters.
     filters = models.JSONField(default=dict, db_default={})

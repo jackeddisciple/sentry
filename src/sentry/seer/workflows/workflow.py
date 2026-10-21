@@ -15,6 +15,8 @@ from sentry.seer.models.workflow import (
     SeerWorkflowFilters,
     SeerWorkflowStrategy,
 )
+from sentry.service_accounts.services.service_account import RpcServiceAccount
+from sentry.service_accounts.services.service_account.service import service_account_service
 
 SEER_DEFAULT_WORKFLOW_STRATEGIES = (SeerWorkflowStrategy.AGENTIC_TRIAGE_V2,)
 
@@ -88,6 +90,40 @@ class SeerWorkflow:
                 )
             )
         return list(projects.order_by("id").values_list("id", flat=True))
+
+    def set_service_account(self, service_account_id: int | None) -> None:
+        """Associate an active account in this organization, or clear the association."""
+        if service_account_id is not None:
+            # Keep the RPC outside the cell transaction. Account state can change afterward,
+            # so execution must resolve the account again and enforce its permissions.
+            self._get_service_account(service_account_id)
+
+        with transaction.atomic(router.db_for_write(SeerWorkflowConfig)):
+            config = SeerWorkflowConfig.objects.select_for_update().get(
+                id=self.config.id, organization_id=self.config.organization_id
+            )
+            if config.service_account_id != service_account_id:
+                config.service_account_id = service_account_id
+                config.version += 1
+                config.save(update_fields=["service_account_id", "version", "date_updated"])
+
+        self.config = config
+
+    def resolve_service_account(self) -> RpcServiceAccount:
+        """Resolve this configuration's account metadata; this does not grant authority."""
+        return self._get_service_account(self.config.service_account_id)
+
+    def _get_service_account(self, service_account_id: int | None) -> RpcServiceAccount:
+        if service_account_id is None:
+            raise ValueError("Workflow has no service account configured")
+        account = service_account_service.get(service_account_id=service_account_id)
+        if account is None:
+            raise ValueError("Service account does not exist")
+        if account.organization_id != self.config.organization_id:
+            raise ValueError("Service account must belong to the workflow's organization")
+        if not account.is_active:
+            raise ValueError("Service account is inactive")
+        return account
 
     def set_project_selection(self, selection: ProjectSelection) -> None:
         match selection:

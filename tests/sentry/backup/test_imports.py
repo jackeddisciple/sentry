@@ -58,10 +58,12 @@ from sentry.models.relay import Relay, RelayUsage
 from sentry.models.team import Team
 from sentry.monitors.models import Monitor
 from sentry.receivers import create_default_projects
+from sentry.seer.models.workflow import SeerWorkflowConfig, SeerWorkflowStrategy
+from sentry.service_accounts.models import ServiceAccount
 from sentry.silo.base import SiloMode
 from sentry.snuba.models import QuerySubscription, SnubaQuery
 from sentry.testutils.cases import TestCase
-from sentry.testutils.factories import get_fixture_path
+from sentry.testutils.factories import Factories, get_fixture_path
 from sentry.testutils.helpers import override_options
 from sentry.testutils.helpers.backups import (
     NOOP_PRINTER,
@@ -2511,6 +2513,35 @@ class CustomImportBehaviorTests(ImportTestCase):
 
             with open(tmp_path, "rb") as tmp_file:
                 verify_models_in_output(expected_models, orjson.loads(tmp_file.read()))
+
+    def test_workflow_service_account_ids_reassigned_in_organization_scope(self) -> None:
+        owner = self.create_user()
+        organization = self.create_organization(owner=owner)
+        account = Factories.create_service_account(organization)
+        source_account_id = account.id
+        Factories.create_seer_workflow_config(
+            organization,
+            strategy=SeerWorkflowStrategy.AGENTIC_TRIAGE_V2,
+            service_account_id=account.id,
+        )
+        Factories.create_seer_workflow_config(
+            organization, strategy=SeerWorkflowStrategy.AGENTIC_TRIAGE_V2
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir).joinpath("workflow-service-account.json")
+            export_to_file(tmp_path, ExportScope.Global)
+            clear_database(reset_pks=False)
+            with open(tmp_path, "rb") as tmp_file:
+                import_in_organization_scope(tmp_file, printer=NOOP_PRINTER)
+
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            restored_account = ServiceAccount.objects.get(name=account.name)
+        assert restored_account.id != source_account_id
+        configured = SeerWorkflowConfig.objects.get(service_account_id__isnull=False)
+        assert configured.service_account_id == restored_account.id
+        assert configured.organization_id == restored_account.organization_id
+        assert SeerWorkflowConfig.objects.filter(service_account_id__isnull=True).count() == 1
 
 
 class BatchingTests(TestCase):

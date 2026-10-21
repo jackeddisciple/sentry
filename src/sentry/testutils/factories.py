@@ -222,6 +222,7 @@ from sentry.sentry_apps.models.sentry_app_installation_for_provider import (
 from sentry.sentry_apps.models.servicehook import ServiceHook, ServiceHookProject
 from sentry.sentry_apps.services.hook import hook_service
 from sentry.sentry_apps.token_exchange.grant_exchanger import GrantExchanger
+from sentry.service_accounts.models import ServiceAccount, ServiceAccountProject
 from sentry.services.eventstore.models import Event, GroupEvent
 from sentry.signals import project_created
 from sentry.silo.base import SiloMode
@@ -3405,6 +3406,21 @@ class Factories:
             user_id=user.id,
             agent_session_id=session_id,
             **kwargs,
+        )
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_service_account(organization: Organization, **kwargs: Any) -> ServiceAccount:
+        kwargs.setdefault("name", uuid4().hex)
+        return ServiceAccount.objects.create(organization_id=organization.id, **kwargs)
+
+    @staticmethod
+    @assume_test_silo_mode(SiloMode.CONTROL)
+    def create_service_account_project(
+        service_account: ServiceAccount, project: Project
+    ) -> ServiceAccountProject:
+        return ServiceAccountProject.objects.create(
+            service_account=service_account, project_id=project.id
         )
 
     @staticmethod
