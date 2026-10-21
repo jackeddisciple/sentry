@@ -82,7 +82,7 @@ function parseTransformation(raw: string): Transformation | null {
   return null;
 }
 
-function serializeTransformation(value: Transformation): string {
+function formatTransformation(value: Transformation): string {
   if (value.kind === 'fill') {
     return `fill(${value.method})`;
   }
@@ -96,11 +96,13 @@ function serializeTransformation(value: Transformation): string {
   return `smooth(${args.join(',')})`;
 }
 
-function defaultSmooth(method: SmoothMethod, window = 10): Transformation {
-  return method === 'ema'
-    ? {kind: 'smooth', method, window, factor: 0.25}
-    : {kind: 'smooth', method, window};
-}
+type SmoothTransformation = Extract<Transformation, {kind: 'smooth'}>;
+
+const SMOOTH_DEFAULTS: Record<SmoothMethod, SmoothTransformation> = {
+  sma: {kind: 'smooth', method: 'sma', window: 3},
+  ema: {kind: 'smooth', method: 'ema', window: 10, factor: 0.25},
+  asap: {kind: 'smooth', method: 'asap', window: 5},
+};
 
 interface Props {
   onChange: (transformations: readonly string[]) => void;
@@ -137,220 +139,61 @@ export function VisualizeTransformations({
     <Stack gap="sm">
       {transformations.map((raw, index) => {
         const transformation = parseTransformation(raw);
-        const analyticsParams = {traceItemDataset, transformation_index: index};
-        const replace = (value: Transformation) =>
-          onChange(transformations.toSpliced(index, 1, serializeTransformation(value)));
-
-        const parameters = transformation?.kind === 'smooth' && (
-          <Flex gap="md" wrap="wrap">
-            <Flex
-              direction={layout === 'inline' ? 'row' : 'column'}
-              align={layout === 'inline' ? 'center' : 'stretch'}
-              gap="xs"
-            >
-              <Text size="sm" wrap="nowrap">
-                {transformation.method === 'asap'
-                  ? t('Max Window Size')
-                  : t('Window Size')}
-              </Text>
-              <CompactSelect
-                options={WINDOW_OPTIONS}
-                value={transformation.window}
-                trigger={props => (
-                  <OverlayTrigger.Button
-                    {...props}
-                    aria-label={
-                      transformation.method === 'asap'
-                        ? t('Max Window Size')
-                        : t('Window Size')
-                    }
-                  >
-                    {transformation.window === undefined ? t('Auto') : props.children}
-                  </OverlayTrigger.Button>
-                )}
-                onChange={({value}) => {
-                  if (value !== transformation.window) {
-                    trackAnalytics('explore.visualize.transformation.window_changed', {
-                      organization,
-                      ...analyticsParams,
-                      method: transformation.method,
-                      window: value,
-                    });
-                  }
-                  replace({...transformation, window: value});
-                }}
-              />
-            </Flex>
-            {transformation.method === 'ema' && (
-              <Flex
-                direction={layout === 'inline' ? 'row' : 'column'}
-                align={layout === 'inline' ? 'center' : 'stretch'}
-                gap="xs"
-              >
-                <Text size="sm" wrap="nowrap">
-                  {t('Smoothing Factor')}
-                </Text>
-                <CompactSelect
-                  options={FACTOR_OPTIONS}
-                  value={transformation.factor}
-                  trigger={props => (
-                    <OverlayTrigger.Button {...props} aria-label={t('Smoothing Factor')}>
-                      {transformation.factor === undefined ? t('Auto') : props.children}
-                    </OverlayTrigger.Button>
-                  )}
-                  onChange={({value}) => {
-                    if (value !== transformation.factor) {
-                      trackAnalytics('explore.visualize.transformation.factor_changed', {
-                        organization,
-                        ...analyticsParams,
-                        factor: value,
-                      });
-                    }
-                    replace({...transformation, factor: value});
-                  }}
-                />
-              </Flex>
-            )}
-          </Flex>
-        );
-
         return (
-          <Stack
-            key={index}
-            role="group"
-            aria-label={t('Transformation %s', index + 1)}
-            gap="sm"
-            padding="md"
-            background="secondary"
-            radius="md"
-          >
-            <Flex align="center" justify="between" gap="sm">
-              <Flex align="center" gap="md" wrap="wrap" minWidth="0">
-                {transformation ? (
-                  <PageFilterBar condensed>
-                    <CompactSelect
-                      options={KIND_OPTIONS}
-                      value={transformation.kind}
-                      trigger={props => (
-                        <OverlayTrigger.Button
-                          {...props}
-                          aria-label={t('Transformation type')}
-                        />
-                      )}
-                      onChange={({value}) => {
-                        if (value === transformation.kind) {
-                          return;
-                        }
-                        const otherIndex = transformations.findIndex(
-                          (candidate, candidateIndex) =>
-                            candidateIndex !== index &&
-                            parseFunction(candidate)?.name === value
-                        );
-                        const otherTransformation = transformations[otherIndex];
-                        if (otherTransformation !== undefined) {
-                          trackAnalytics('explore.visualize.transformation.reordered', {
-                            organization,
-                            ...analyticsParams,
-                            transformation_type: transformation.kind,
-                            target_type: value,
-                            target_index: otherIndex,
-                          });
-                          onChange(
-                            transformations
-                              .toSpliced(index, 1, otherTransformation)
-                              .toSpliced(otherIndex, 1, raw)
-                          );
-                          return;
-                        }
-                        trackAnalytics('explore.visualize.transformation.type_changed', {
-                          organization,
-                          ...analyticsParams,
-                          previous_type: transformation.kind,
-                          transformation_type: value,
-                        });
-                        replace(
-                          value === 'fill'
-                            ? {kind: 'fill', method: 'zero'}
-                            : defaultSmooth('sma')
-                        );
-                      }}
-                    />
-                    {transformation.kind === 'fill' ? (
-                      <CompactSelect
-                        options={FILL_OPTIONS}
-                        value={transformation.method}
-                        trigger={props => (
-                          <OverlayTrigger.Button
-                            {...props}
-                            aria-label={t('Fill method')}
-                          />
-                        )}
-                        onChange={({value}) => {
-                          if (value !== transformation.method) {
-                            trackAnalytics(
-                              'explore.visualize.transformation.method_changed',
-                              {
-                                organization,
-                                ...analyticsParams,
-                                transformation_type: 'fill',
-                                method: value,
-                              }
-                            );
-                          }
-                          replace({...transformation, method: value});
-                        }}
-                      />
-                    ) : (
-                      <CompactSelect
-                        options={SMOOTH_OPTIONS}
-                        value={transformation.method}
-                        trigger={props => (
-                          <OverlayTrigger.Button
-                            {...props}
-                            aria-label={t('Smoothing method')}
-                          />
-                        )}
-                        onChange={({value}) => {
-                          if (value !== transformation.method) {
-                            trackAnalytics(
-                              'explore.visualize.transformation.method_changed',
-                              {
-                                organization,
-                                ...analyticsParams,
-                                transformation_type: 'smooth',
-                                method: value,
-                              }
-                            );
-                            replace(defaultSmooth(value, transformation.window));
-                          }
-                        }}
-                      />
-                    )}
-                  </PageFilterBar>
-                ) : (
-                  <Text size="sm">{t('Unsupported transformation')}</Text>
-                )}
-                {layout === 'inline' ? parameters : null}
-              </Flex>
-              <Button
-                variant="transparent"
-                size="zero"
-                icon={<IconDelete size="sm" />}
-                aria-label={t('Remove transformation')}
-                analyticsEventKey="explore.visualize.transformation.removed"
-                analyticsEventName={
-                  exploreAnalyticsEventMap['explore.visualize.transformation.removed'] ??
-                  undefined
-                }
-                analyticsParams={{
+          <TransformationRow
+            key={`${parseFunction(raw)?.name ?? 'unsupported'}-${index}`}
+            transformation={transformation}
+            index={index}
+            traceItemDataset={traceItemDataset}
+            layout={layout}
+            onChange={value =>
+              onChange(transformations.toSpliced(index, 1, formatTransformation(value)))
+            }
+            onRemove={() => onChange(transformations.toSpliced(index, 1))}
+            onTypeChange={kind => {
+              if (!transformation || kind === transformation.kind) {
+                return;
+              }
+              const analyticsParams = {
+                organization,
+                traceItemDataset,
+                transformation_index: index,
+              };
+              const otherIndex = transformations.findIndex(
+                (candidate, candidateIndex) =>
+                  candidateIndex !== index && parseFunction(candidate)?.name === kind
+              );
+              const otherTransformation = transformations[otherIndex];
+              if (otherTransformation !== undefined) {
+                trackAnalytics('explore.visualize.transformation.reordered', {
                   ...analyticsParams,
-                  transformation_type: transformation?.kind ?? 'unsupported',
-                }}
-                onClick={() => onChange(transformations.toSpliced(index, 1))}
-              />
-            </Flex>
-            {layout === 'stacked' ? parameters : null}
-          </Stack>
+                  transformation_type: transformation.kind,
+                  target_type: kind,
+                  target_index: otherIndex,
+                });
+                onChange(
+                  transformations
+                    .toSpliced(index, 1, otherTransformation)
+                    .toSpliced(otherIndex, 1, raw)
+                );
+                return;
+              }
+              trackAnalytics('explore.visualize.transformation.type_changed', {
+                ...analyticsParams,
+                previous_type: transformation.kind,
+                transformation_type: kind,
+              });
+              onChange(
+                transformations.toSpliced(
+                  index,
+                  1,
+                  formatTransformation(
+                    kind === 'fill' ? {kind: 'fill', method: 'zero'} : SMOOTH_DEFAULTS.sma
+                  )
+                )
+              );
+            }}
+          />
         );
       })}
     </Stack>
@@ -375,8 +218,8 @@ export function VisualizeTransformations({
         });
         onChange([
           ...transformations,
-          serializeTransformation(
-            value === 'fill' ? {kind: 'fill', method: 'zero'} : defaultSmooth('sma')
+          formatTransformation(
+            value === 'fill' ? {kind: 'fill', method: 'zero'} : SMOOTH_DEFAULTS.sma
           ),
         ]);
       }}
@@ -390,5 +233,213 @@ export function VisualizeTransformations({
       {rows}
       {addTrigger}
     </Stack>
+  );
+}
+
+interface TransformationRowProps {
+  index: number;
+  layout: Props['layout'];
+  onChange: (value: Transformation) => void;
+  onRemove: () => void;
+  onTypeChange: (kind: Transformation['kind']) => void;
+  traceItemDataset: Props['traceItemDataset'];
+  transformation: Transformation | null;
+}
+
+function TransformationRow({
+  index,
+  layout,
+  onChange,
+  onRemove,
+  onTypeChange,
+  traceItemDataset,
+  transformation,
+}: TransformationRowProps) {
+  const organization = useOrganization();
+  const analyticsParams = {traceItemDataset, transformation_index: index};
+  const parameters = transformation?.kind === 'smooth' && (
+    <SmoothingSettings
+      transformation={transformation}
+      index={index}
+      traceItemDataset={traceItemDataset}
+      layout={layout}
+      onChange={onChange}
+    />
+  );
+  return (
+    <Stack
+      role="group"
+      aria-label={t('Transformation %s', index + 1)}
+      gap="sm"
+      padding="md"
+      background="secondary"
+      radius="md"
+    >
+      <Flex align="center" justify="between" gap="sm">
+        <Flex align="center" gap="md" wrap="wrap" minWidth="0">
+          {transformation ? (
+            <PageFilterBar condensed>
+              <CompactSelect
+                options={KIND_OPTIONS}
+                value={transformation.kind}
+                trigger={props => (
+                  <OverlayTrigger.Button
+                    {...props}
+                    aria-label={t('Transformation type')}
+                  />
+                )}
+                onChange={({value}) => onTypeChange(value)}
+              />
+              {transformation.kind === 'fill' ? (
+                <CompactSelect
+                  options={FILL_OPTIONS}
+                  value={transformation.method}
+                  trigger={props => (
+                    <OverlayTrigger.Button {...props} aria-label={t('Fill method')} />
+                  )}
+                  onChange={({value}) => {
+                    if (value !== transformation.method) {
+                      trackAnalytics('explore.visualize.transformation.method_changed', {
+                        organization,
+                        ...analyticsParams,
+                        transformation_type: 'fill',
+                        method: value,
+                      });
+                    }
+                    onChange({...transformation, method: value});
+                  }}
+                />
+              ) : (
+                <CompactSelect
+                  options={SMOOTH_OPTIONS}
+                  value={transformation.method}
+                  trigger={props => (
+                    <OverlayTrigger.Button
+                      {...props}
+                      aria-label={t('Smoothing method')}
+                    />
+                  )}
+                  onChange={({value}) => {
+                    if (value !== transformation.method) {
+                      trackAnalytics('explore.visualize.transformation.method_changed', {
+                        organization,
+                        ...analyticsParams,
+                        transformation_type: 'smooth',
+                        method: value,
+                      });
+                      onChange(SMOOTH_DEFAULTS[value]);
+                    }
+                  }}
+                />
+              )}
+            </PageFilterBar>
+          ) : (
+            <Text size="sm">{t('Unsupported transformation')}</Text>
+          )}
+          {layout === 'inline' ? parameters : null}
+        </Flex>
+        <Button
+          variant="transparent"
+          size="zero"
+          icon={<IconDelete size="sm" />}
+          aria-label={t('Remove transformation')}
+          analyticsEventKey="explore.visualize.transformation.removed"
+          analyticsEventName={
+            exploreAnalyticsEventMap['explore.visualize.transformation.removed'] ??
+            undefined
+          }
+          analyticsParams={{
+            ...analyticsParams,
+            transformation_type: transformation?.kind ?? 'unsupported',
+          }}
+          onClick={onRemove}
+        />
+      </Flex>
+      {layout === 'stacked' ? parameters : null}
+    </Stack>
+  );
+}
+
+interface SmoothingSettingsProps {
+  index: number;
+  layout: Props['layout'];
+  onChange: (value: SmoothTransformation) => void;
+  traceItemDataset: Props['traceItemDataset'];
+  transformation: SmoothTransformation;
+}
+
+function SmoothingSettings({
+  index,
+  layout,
+  onChange,
+  traceItemDataset,
+  transformation,
+}: SmoothingSettingsProps) {
+  const organization = useOrganization();
+  const analyticsParams = {traceItemDataset, transformation_index: index};
+  const windowLabel =
+    transformation.method === 'asap' ? t('Max Window Size') : t('Window Size');
+  return (
+    <Flex gap="md" wrap="wrap">
+      <Flex
+        direction={layout === 'inline' ? 'row' : 'column'}
+        align={layout === 'inline' ? 'center' : 'stretch'}
+        gap="xs"
+      >
+        <Text size="sm" wrap="nowrap">
+          {windowLabel}
+        </Text>
+        <CompactSelect
+          options={WINDOW_OPTIONS}
+          value={transformation.window}
+          trigger={props => (
+            <OverlayTrigger.Button {...props} aria-label={windowLabel}>
+              {transformation.window === undefined ? t('Auto') : props.children}
+            </OverlayTrigger.Button>
+          )}
+          onChange={({value}) => {
+            if (value !== transformation.window) {
+              trackAnalytics('explore.visualize.transformation.window_changed', {
+                organization,
+                ...analyticsParams,
+                method: transformation.method,
+                window: value,
+              });
+            }
+            onChange({...transformation, window: value});
+          }}
+        />
+      </Flex>
+      {transformation.method === 'ema' && (
+        <Flex
+          direction={layout === 'inline' ? 'row' : 'column'}
+          align={layout === 'inline' ? 'center' : 'stretch'}
+          gap="xs"
+        >
+          <Text size="sm" wrap="nowrap">
+            {t('Smoothing Factor')}
+          </Text>
+          <CompactSelect
+            options={FACTOR_OPTIONS}
+            value={transformation.factor}
+            trigger={props => (
+              <OverlayTrigger.Button {...props} aria-label={t('Smoothing Factor')}>
+                {transformation.factor === undefined ? t('Auto') : props.children}
+              </OverlayTrigger.Button>
+            )}
+            onChange={({value}) => {
+              if (value !== transformation.factor) {
+                trackAnalytics('explore.visualize.transformation.factor_changed', {
+                  organization,
+                  ...analyticsParams,
+                  factor: value,
+                });
+              }
+              onChange({...transformation, factor: value});
+            }}
+          />
+        </Flex>
+      )}
+    </Flex>
   );
 }
