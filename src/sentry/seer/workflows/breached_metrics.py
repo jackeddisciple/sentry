@@ -80,7 +80,7 @@ def accept_metric_breach(
     config_id: int,
     origin: MetricBreachWorkflowOrigin,
 ) -> AcceptedMetricBreach | RejectedMetricBreach | IgnoredMetricBreach:
-    """Check eligibility, then record an idempotent admission decision for this attempt."""
+    """Check eligibility, then record one admission decision per issue and config."""
     if group.type != MetricIssue.type_id or not isinstance(event, GroupEvent):
         return IgnoredMetricBreach("unsupported_trigger")
     occurrence = event.occurrence
@@ -134,21 +134,18 @@ def accept_metric_breach(
             group, trigger.detector_id, origin.workflow_id, origin.action_id
         ):
             return IgnoredMetricBreach("workflow_unavailable")
-        attempt_id = f"event:{event.event_id}"
         trigger_key = f"issue_created:{group.id}"
-        runs = SeerWorkflowRun.objects.filter(
+        run = SeerWorkflowRun.objects.filter(
             organization_id=group.organization.id,
             workflow_config=config,
             trigger_key=trigger_key,
-        )
-        previous_attempt = runs.filter(extras__admission__request_id=attempt_id).first()
-        if previous_attempt is not None and previous_attempt.extras.get("status") == "rejected":
+        ).first()
+        if run is not None and run.extras.get("status") == "rejected":
             return RejectedMetricBreach(
-                run=previous_attempt,
-                reason=previous_attempt.extras["admission"]["reason"],
+                run=run,
+                reason=run.extras["admission"]["reason"],
                 created=False,
             )
-        run = previous_attempt or runs.exclude(extras__contains={"status": "rejected"}).first()
         created = run is None
         if run is None:
             reason = admission_rejection_reason(config)
@@ -165,7 +162,6 @@ def accept_metric_breach(
                         "status": "rejected" if reason is not None else "accepted",
                         "reason": reason,
                         "decided_at": decided_at.isoformat(),
-                        "request_id": attempt_id,
                     },
                     "trigger": {
                         **trigger.dict(),

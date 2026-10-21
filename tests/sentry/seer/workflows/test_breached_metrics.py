@@ -130,7 +130,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert run.executions.get().extras == {"status": "complete", "result": "noop"}
         assert SeerWorkflowRun.objects.count() == 1
 
-    def test_existing_run_without_status_is_reused(self) -> None:
+    def test_existing_run_is_reused(self) -> None:
         existing = Factories.create_seer_workflow_run(
             self.organization,
             workflow_config=self.config,
@@ -139,35 +139,6 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         )
 
         replayed = self.accept(self.breach_event())
-
-        assert replayed is not None
-        assert replayed.id == existing.id
-        assert SeerWorkflowRun.objects.count() == 1
-
-    def test_existing_run_with_json_null_status_is_reused(self) -> None:
-        existing = Factories.create_seer_workflow_run(
-            self.organization,
-            workflow_config=self.config,
-            trigger_key=f"issue_created:{self.group.id}",
-            extras={"status": None},
-        )
-
-        replayed = self.accept(self.breach_event())
-
-        assert replayed is not None
-        assert replayed.id == existing.id
-        assert SeerWorkflowRun.objects.count() == 1
-
-    def test_matching_attempt_without_status_is_reused(self) -> None:
-        event = self.breach_event()
-        existing = Factories.create_seer_workflow_run(
-            self.organization,
-            workflow_config=self.config,
-            trigger_key=f"issue_created:{self.group.id}",
-            extras={"admission": {"request_id": f"event:{event.event_id}"}},
-        )
-
-        replayed = self.accept(event)
 
         assert replayed is not None
         assert replayed.id == existing.id
@@ -583,7 +554,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert not SeerWorkflowRunExecution.objects.exists()
         admission.assert_called_once_with(self.config)
 
-    def test_rejected_attempt_replay_preserves_history(self) -> None:
+    def test_rejected_trigger_is_not_readmitted_for_the_same_or_another_event(self) -> None:
         event = self.breach_event()
         with mock.patch(
             "sentry.seer.workflows.breached_metrics.admission_rejection_reason",
@@ -599,7 +570,8 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
             )
 
         with mock.patch(
-            "sentry.seer.workflows.breached_metrics.admission_rejection_reason"
+            "sentry.seer.workflows.breached_metrics.admission_rejection_reason",
+            return_value=None,
         ) as admission:
             replayed = accept_metric_breach(
                 self.group,
@@ -609,10 +581,23 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
                     workflow_id=self.workflow.id, action_id=self.action.id
                 ),
             )
+            later = accept_metric_breach(
+                self.group,
+                self.breach_event(),
+                config_id=self.config.id,
+                origin=MetricBreachWorkflowOrigin(
+                    workflow_id=self.workflow.id, action_id=self.action.id
+                ),
+            )
         assert isinstance(first, RejectedMetricBreach)
         assert isinstance(replayed, RejectedMetricBreach)
         assert replayed.created is False
         assert replayed.run.id == first.run.id
+        assert replayed.reason == "quota_exceeded"
+        assert isinstance(later, RejectedMetricBreach)
+        assert later.created is False
+        assert later.run.id == first.run.id
+        assert later.reason == "quota_exceeded"
         admission.assert_not_called()
 
         assert SeerWorkflowRun.objects.count() == 1
