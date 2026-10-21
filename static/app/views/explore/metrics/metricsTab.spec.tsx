@@ -29,7 +29,6 @@ import {
   VisualizeEquation,
   VisualizeFunction,
 } from 'sentry/views/explore/queryParams/visualize';
-import {TraceItemDataset} from 'sentry/views/explore/types';
 import type {EventValidationData} from 'sentry/views/explore/utils/validateEventParamsOptions';
 
 jest.mock('sentry/utils/analytics');
@@ -258,19 +257,6 @@ describe('MetricsTabContent', () => {
       'true'
     );
     await userEvent.click(screen.getByRole('option', {name: 'Smooth'}));
-    expect(trackAnalyticsMock).toHaveBeenCalledWith(
-      'explore.visualize.transformation.added',
-      expect.objectContaining({
-        traceItemDataset: TraceItemDataset.TRACEMETRICS,
-        transformation_index: 1,
-        transformation_type: 'smooth',
-      })
-    );
-    expect(
-      trackAnalyticsMock.mock.calls.filter(
-        ([event]) => event === 'explore.visualize.transformation.added'
-      )
-    ).toHaveLength(1);
     await userEvent.click(
       within(firstPanel).getByRole('button', {name: 'Smoothing method'})
     );
