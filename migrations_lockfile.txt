@@ -35,7 +35,7 @@ replays: 0001_squashed_0007_organizationmember_replay_access
 
 seer: 0038_add_workflow_config_scope
 
-sentry: 1232_detach_incident_foreign_keys
+sentry: 1233_retire_incident
 
 service_accounts: 0001_initial
 
