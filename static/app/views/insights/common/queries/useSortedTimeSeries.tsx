@@ -46,6 +46,7 @@ interface Options<Fields> {
   search?: AnyMutableSearch;
   spanQuery?: string[];
   topEvents?: number;
+  transformations?: ReadonlyArray<readonly string[]>;
   yAxis?: Fields;
 }
 
@@ -70,6 +71,7 @@ export const useSortedTimeSeries = <
     logQuery,
     metricQuery,
     spanQuery,
+    transformations,
   } = options;
 
   const pageFilters = usePageFilters();
@@ -114,6 +116,7 @@ export const useSortedTimeSeries = <
     dataset ?? DiscoverDatasets.SPANS,
     {
       yAxis: yAxis as unknown as any,
+      transformations,
       query: search,
       topEvents,
       groupBy,
