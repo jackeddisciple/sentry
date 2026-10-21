@@ -63,20 +63,13 @@ class TestIncidentSerializer(TestWorkflowEngineSerializer):
         )
         return out
 
-    def test_simple(self) -> None:
+    def test_historical_mapping_without_incident_row(self) -> None:
         serialized_incident = serialize(
             self.group_open_period, self.user, WorkflowEngineIncidentSerializer()
         )
         assert self._sort_triggers(serialized_incident) == self._sort_triggers(
             self.incident_expected
         )
-
-    def test_historical_mapping_without_incident_row(self) -> None:
-        self.incident.delete()
-        serialized = serialize(
-            self.group_open_period, self.user, WorkflowEngineIncidentSerializer()
-        )
-        assert self._sort_triggers(serialized) == self._sort_triggers(self.incident_expected)
 
     def test_unmapped_period_of_migrated_detector(self) -> None:
         self.incident_group_open_period.delete()

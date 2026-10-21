@@ -30,7 +30,6 @@ from sentry.testutils.helpers.metric_alert_migration import (
 from sentry.testutils.silo import assume_test_silo_mode
 from sentry.types.activity import ActivityType
 from sentry.types.group import PriorityLevel
-from sentry.workflow_engine.models import IncidentGroupOpenPeriod
 from sentry.workflow_engine.models.workflow_action_group_status import WorkflowActionGroupStatus
 
 
@@ -171,8 +170,6 @@ class TestWorkflowEngineSerializer(TestCase):
         )
 
     def add_incident_data(self) -> None:
-        self.incident = self.create_incident(alert_rule=self.alert_rule, date_started=self.now)
-
         self.group.priority = PriorityLevel.HIGH
         self.group.save()
 
@@ -183,11 +180,11 @@ class TestWorkflowEngineSerializer(TestCase):
         self.group_open_period = GroupOpenPeriod.objects.get(
             group=self.group, project=self.detector.linked_project
         )
-        self.group_open_period.update(date_started=self.incident.date_started)
-        self.incident_group_open_period = IncidentGroupOpenPeriod.objects.create(
+        self.group_open_period.update(date_started=self.now)
+        self.incident_group_open_period = self.create_incident_group_open_period(
             group_open_period=self.group_open_period,
-            incident_id=self.incident.id,
-            incident_identifier=self.incident.identifier,
+            incident_id=123,
+            incident_identifier=42,
         )
         Activity.objects.create_group_activity(
             group=self.group_open_period.group,
