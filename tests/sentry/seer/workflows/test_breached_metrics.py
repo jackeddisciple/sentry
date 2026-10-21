@@ -130,6 +130,49 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert run.executions.get().extras == {"status": "complete", "result": "noop"}
         assert SeerWorkflowRun.objects.count() == 1
 
+    def test_existing_run_without_status_is_reused(self) -> None:
+        existing = Factories.create_seer_workflow_run(
+            self.organization,
+            workflow_config=self.config,
+            trigger_key=f"issue_created:{self.group.id}",
+            extras={},
+        )
+
+        replayed = self.accept(self.breach_event())
+
+        assert replayed is not None
+        assert replayed.id == existing.id
+        assert SeerWorkflowRun.objects.count() == 1
+
+    def test_existing_run_with_json_null_status_is_reused(self) -> None:
+        existing = Factories.create_seer_workflow_run(
+            self.organization,
+            workflow_config=self.config,
+            trigger_key=f"issue_created:{self.group.id}",
+            extras={"status": None},
+        )
+
+        replayed = self.accept(self.breach_event())
+
+        assert replayed is not None
+        assert replayed.id == existing.id
+        assert SeerWorkflowRun.objects.count() == 1
+
+    def test_matching_attempt_without_status_is_reused(self) -> None:
+        event = self.breach_event()
+        existing = Factories.create_seer_workflow_run(
+            self.organization,
+            workflow_config=self.config,
+            trigger_key=f"issue_created:{self.group.id}",
+            extras={"admission": {"request_id": f"event:{event.event_id}"}},
+        )
+
+        replayed = self.accept(event)
+
+        assert replayed is not None
+        assert replayed.id == existing.id
+        assert SeerWorkflowRun.objects.count() == 1
+
     def test_new_issue_without_an_open_period_can_start_a_run(self) -> None:
         event = self.breach_event()
         assert not GroupOpenPeriod.objects.filter(group=self.group).exists()

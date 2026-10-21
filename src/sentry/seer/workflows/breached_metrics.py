@@ -142,13 +142,13 @@ def accept_metric_breach(
             trigger_key=trigger_key,
         )
         previous_attempt = runs.filter(extras__admission__request_id=attempt_id).first()
-        if previous_attempt is not None and previous_attempt.extras["status"] == "rejected":
+        if previous_attempt is not None and previous_attempt.extras.get("status") == "rejected":
             return RejectedMetricBreach(
                 run=previous_attempt,
                 reason=previous_attempt.extras["admission"]["reason"],
                 created=False,
             )
-        run = previous_attempt or runs.exclude(extras__status="rejected").first()
+        run = previous_attempt or runs.exclude(extras__contains={"status": "rejected"}).first()
         created = run is None
         if run is None:
             reason = admission_rejection_reason(config)
