@@ -41,7 +41,7 @@ from sentry.service_accounts.endpoints.organization_service_accounts import (
 )
 from sentry.viewer_context import ActorType, ViewerContext, encode_viewer_context
 
-MOCK_SERVICE_ACCOUNT_SCOPES = ["event:read", "org:read", "project:read"]
+SERVICE_ACCOUNT_SCOPES = ["event:read", "org:read", "project:read"]
 
 
 class ServiceAccountViewerContextResponse(TypedDict):
@@ -96,6 +96,6 @@ class OrganizationServiceAccountViewerContextEndpoint(OrganizationEndpoint):
         response: ServiceAccountViewerContextResponse = {
             "viewerContext": viewer_context,
             "expiresAt": timezone.now() + timedelta(seconds=ttl),
-            "scopes": MOCK_SERVICE_ACCOUNT_SCOPES,
+            "scopes": SERVICE_ACCOUNT_SCOPES,
         }
         return Response(response)
