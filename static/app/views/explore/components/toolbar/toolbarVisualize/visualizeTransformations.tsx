@@ -102,9 +102,19 @@ function defaultSmooth(method: SmoothMethod, window = 10): Transformation {
 interface Props {
   onChange: (transformations: readonly string[]) => void;
   transformations: readonly string[];
+  children?: (parts: {
+    addTrigger: React.ReactNode;
+    rows: React.ReactNode;
+  }) => React.ReactNode;
+  layout?: 'stacked' | 'inline';
 }
 
-export function VisualizeTransformations({transformations, onChange}: Props) {
+export function VisualizeTransformations({
+  transformations,
+  onChange,
+  children,
+  layout = 'stacked',
+}: Props) {
   const organization = useOrganization();
   if (!organization.features.includes('explore-interpolation-and-smoothing')) {
     return null;
@@ -115,12 +125,66 @@ export function VisualizeTransformations({transformations, onChange}: Props) {
     disabled: transformations.some(raw => parseFunction(raw)?.name === option.value),
   }));
 
-  return (
+  const rows = transformations.length ? (
     <Stack gap="sm">
       {transformations.map((raw, index) => {
         const transformation = parseTransformation(raw);
         const replace = (value: Transformation) =>
           onChange(transformations.toSpliced(index, 1, serializeTransformation(value)));
+
+        const parameters = transformation?.kind === 'smooth' && (
+          <Flex gap="md" wrap="wrap">
+            <Flex
+              direction={layout === 'inline' ? 'row' : 'column'}
+              align={layout === 'inline' ? 'center' : 'stretch'}
+              gap="xs"
+            >
+              <Text size="sm" wrap="nowrap">
+                {transformation.method === 'asap'
+                  ? t('Max Window Size')
+                  : t('Window Size')}
+              </Text>
+              <CompactSelect
+                options={WINDOW_OPTIONS}
+                value={transformation.window}
+                trigger={props => (
+                  <OverlayTrigger.Button
+                    {...props}
+                    aria-label={
+                      transformation.method === 'asap'
+                        ? t('Max Window Size')
+                        : t('Window Size')
+                    }
+                  >
+                    {transformation.window === undefined ? t('Auto') : props.children}
+                  </OverlayTrigger.Button>
+                )}
+                onChange={({value}) => replace({...transformation, window: value})}
+              />
+            </Flex>
+            {transformation.method === 'ema' && (
+              <Flex
+                direction={layout === 'inline' ? 'row' : 'column'}
+                align={layout === 'inline' ? 'center' : 'stretch'}
+                gap="xs"
+              >
+                <Text size="sm" wrap="nowrap">
+                  {t('Smoothing Factor')}
+                </Text>
+                <CompactSelect
+                  options={FACTOR_OPTIONS}
+                  value={transformation.factor}
+                  trigger={props => (
+                    <OverlayTrigger.Button {...props} aria-label={t('Smoothing Factor')}>
+                      {transformation.factor === undefined ? t('Auto') : props.children}
+                    </OverlayTrigger.Button>
+                  )}
+                  onChange={({value}) => replace({...transformation, factor: value})}
+                />
+              </Flex>
+            )}
+          </Flex>
+        );
 
         return (
           <Stack
@@ -133,72 +197,80 @@ export function VisualizeTransformations({transformations, onChange}: Props) {
             radius="md"
           >
             <Flex align="center" justify="between" gap="sm">
-              {transformation ? (
-                <PageFilterBar condensed>
-                  <CompactSelect
-                    options={KIND_OPTIONS}
-                    value={transformation.kind}
-                    trigger={props => (
-                      <OverlayTrigger.Button
-                        {...props}
-                        aria-label={t('Transformation type')}
-                      />
-                    )}
-                    onChange={({value}) => {
-                      if (value === transformation.kind) {
-                        return;
-                      }
-                      const otherIndex = transformations.findIndex(
-                        (candidate, candidateIndex) =>
-                          candidateIndex !== index &&
-                          parseFunction(candidate)?.name === value
-                      );
-                      const otherTransformation = transformations[otherIndex];
-                      if (otherTransformation !== undefined) {
-                        onChange(
-                          transformations
-                            .toSpliced(index, 1, otherTransformation)
-                            .toSpliced(otherIndex, 1, raw)
-                        );
-                        return;
-                      }
-                      replace(
-                        value === 'fill'
-                          ? {kind: 'fill', method: 'zero'}
-                          : defaultSmooth('sma')
-                      );
-                    }}
-                  />
-                  {transformation.kind === 'fill' ? (
+              <Flex align="center" gap="md" wrap="wrap" minWidth="0">
+                {transformation ? (
+                  <PageFilterBar condensed>
                     <CompactSelect
-                      options={FILL_OPTIONS}
-                      value={transformation.method}
-                      trigger={props => (
-                        <OverlayTrigger.Button {...props} aria-label={t('Fill method')} />
-                      )}
-                      onChange={({value}) => replace({...transformation, method: value})}
-                    />
-                  ) : (
-                    <CompactSelect
-                      options={SMOOTH_OPTIONS}
-                      value={transformation.method}
+                      options={KIND_OPTIONS}
+                      value={transformation.kind}
                       trigger={props => (
                         <OverlayTrigger.Button
                           {...props}
-                          aria-label={t('Smoothing method')}
+                          aria-label={t('Transformation type')}
                         />
                       )}
                       onChange={({value}) => {
-                        if (value !== transformation.method) {
-                          replace(defaultSmooth(value, transformation.window));
+                        if (value === transformation.kind) {
+                          return;
                         }
+                        const otherIndex = transformations.findIndex(
+                          (candidate, candidateIndex) =>
+                            candidateIndex !== index &&
+                            parseFunction(candidate)?.name === value
+                        );
+                        const otherTransformation = transformations[otherIndex];
+                        if (otherTransformation !== undefined) {
+                          onChange(
+                            transformations
+                              .toSpliced(index, 1, otherTransformation)
+                              .toSpliced(otherIndex, 1, raw)
+                          );
+                          return;
+                        }
+                        replace(
+                          value === 'fill'
+                            ? {kind: 'fill', method: 'zero'}
+                            : defaultSmooth('sma')
+                        );
                       }}
                     />
-                  )}
-                </PageFilterBar>
-              ) : (
-                <Text size="sm">{t('Unsupported transformation')}</Text>
-              )}
+                    {transformation.kind === 'fill' ? (
+                      <CompactSelect
+                        options={FILL_OPTIONS}
+                        value={transformation.method}
+                        trigger={props => (
+                          <OverlayTrigger.Button
+                            {...props}
+                            aria-label={t('Fill method')}
+                          />
+                        )}
+                        onChange={({value}) =>
+                          replace({...transformation, method: value})
+                        }
+                      />
+                    ) : (
+                      <CompactSelect
+                        options={SMOOTH_OPTIONS}
+                        value={transformation.method}
+                        trigger={props => (
+                          <OverlayTrigger.Button
+                            {...props}
+                            aria-label={t('Smoothing method')}
+                          />
+                        )}
+                        onChange={({value}) => {
+                          if (value !== transformation.method) {
+                            replace(defaultSmooth(value, transformation.window));
+                          }
+                        }}
+                      />
+                    )}
+                  </PageFilterBar>
+                ) : (
+                  <Text size="sm">{t('Unsupported transformation')}</Text>
+                )}
+                {layout === 'inline' ? parameters : null}
+              </Flex>
               <Button
                 variant="transparent"
                 size="zero"
@@ -207,75 +279,40 @@ export function VisualizeTransformations({transformations, onChange}: Props) {
                 onClick={() => onChange(transformations.toSpliced(index, 1))}
               />
             </Flex>
-            {transformation?.kind === 'smooth' && (
-              <Flex gap="md" wrap="wrap">
-                <Stack gap="xs">
-                  <Text size="sm">
-                    {transformation.method === 'asap'
-                      ? t('Max Window Size')
-                      : t('Window Size')}
-                  </Text>
-                  <CompactSelect
-                    options={WINDOW_OPTIONS}
-                    value={transformation.window}
-                    trigger={props => (
-                      <OverlayTrigger.Button
-                        {...props}
-                        aria-label={
-                          transformation.method === 'asap'
-                            ? t('Max Window Size')
-                            : t('Window Size')
-                        }
-                      >
-                        {transformation.window === undefined ? t('Auto') : props.children}
-                      </OverlayTrigger.Button>
-                    )}
-                    onChange={({value}) => replace({...transformation, window: value})}
-                  />
-                </Stack>
-                {transformation.method === 'ema' && (
-                  <Stack gap="xs">
-                    <Text size="sm">{t('Smoothing Factor')}</Text>
-                    <CompactSelect
-                      options={FACTOR_OPTIONS}
-                      value={transformation.factor}
-                      trigger={props => (
-                        <OverlayTrigger.Button
-                          {...props}
-                          aria-label={t('Smoothing Factor')}
-                        >
-                          {transformation.factor === undefined
-                            ? t('Auto')
-                            : props.children}
-                        </OverlayTrigger.Button>
-                      )}
-                      onChange={({value}) => replace({...transformation, factor: value})}
-                    />
-                  </Stack>
-                )}
-              </Flex>
-            )}
+            {layout === 'stacked' ? parameters : null}
           </Stack>
         );
       })}
-      <CompactSelect
-        options={kindOptions}
-        disabled={transformations.length >= KIND_OPTIONS.length}
-        value={undefined}
-        trigger={props => (
-          <OverlayTrigger.Button {...props} variant="link" size="zero" icon={<IconAdd />}>
-            {t('Add Transformation')}
-          </OverlayTrigger.Button>
-        )}
-        onChange={({value}) =>
-          onChange([
-            ...transformations,
-            serializeTransformation(
-              value === 'fill' ? {kind: 'fill', method: 'zero'} : defaultSmooth('sma')
-            ),
-          ])
-        }
-      />
+    </Stack>
+  ) : null;
+
+  const addTrigger = (
+    <CompactSelect
+      options={kindOptions}
+      disabled={transformations.length >= KIND_OPTIONS.length}
+      value={undefined}
+      trigger={props => (
+        <OverlayTrigger.Button {...props} variant="link" size="zero" icon={<IconAdd />}>
+          {t('Add Transformation')}
+        </OverlayTrigger.Button>
+      )}
+      onChange={({value}) =>
+        onChange([
+          ...transformations,
+          serializeTransformation(
+            value === 'fill' ? {kind: 'fill', method: 'zero'} : defaultSmooth('sma')
+          ),
+        ])
+      }
+    />
+  );
+
+  return children ? (
+    children({addTrigger, rows})
+  ) : (
+    <Stack gap="sm">
+      {rows}
+      {addTrigger}
     </Stack>
   );
 }

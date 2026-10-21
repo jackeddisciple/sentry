@@ -5,14 +5,30 @@ import {render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary
 
 import {VisualizeTransformations} from './visualizeTransformations';
 
-function Example({initial = []}: {initial?: string[]}) {
+function Example({
+  initial = [],
+  layout,
+}: {
+  initial?: string[];
+  layout?: 'stacked' | 'inline';
+}) {
   const [transformations, setTransformations] = useState<readonly string[]>(initial);
   return (
     <div>
       <VisualizeTransformations
         transformations={transformations}
         onChange={setTransformations}
-      />
+        layout={layout}
+      >
+        {layout === 'inline'
+          ? ({addTrigger, rows}) => (
+              <section>
+                {addTrigger}
+                {rows}
+              </section>
+            )
+          : undefined}
+      </VisualizeTransformations>
       <output>{JSON.stringify(transformations)}</output>
     </div>
   );
@@ -21,6 +37,41 @@ function Example({initial = []}: {initial?: string[]}) {
 describe('VisualizeTransformations', () => {
   const organization = OrganizationFixture({
     features: ['explore-interpolation-and-smoothing'],
+  });
+
+  it('composes inline controls while preserving defaults, swaps and removal', async () => {
+    render(<Example initial={['fill(locf)']} layout="inline" />, {organization});
+
+    await userEvent.click(screen.getByRole('button', {name: 'Add Transformation'}));
+    expect(screen.getByRole('option', {name: 'Fill'})).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
+    await userEvent.click(screen.getByRole('option', {name: 'Smooth'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Smoothing method'}));
+    await userEvent.click(screen.getByRole('option', {name: 'EMA'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Window Size'}));
+    await userEvent.click(screen.getByRole('option', {name: '4'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Smoothing Factor'}));
+    await userEvent.click(screen.getByRole('option', {name: '75%'}));
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '["fill(locf)","smooth(ema,4,0.75)"]'
+    );
+    expect(screen.getByRole('button', {name: 'Add Transformation'})).toBeDisabled();
+
+    const firstRow = screen.getByRole('group', {name: 'Transformation 1'});
+    await userEvent.click(
+      within(firstRow).getByRole('button', {name: 'Transformation type'})
+    );
+    await userEvent.click(screen.getByRole('option', {name: 'Smooth'}));
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '["smooth(ema,4,0.75)","fill(locf)"]'
+    );
+    await userEvent.click(
+      within(firstRow).getByRole('button', {name: 'Remove transformation'})
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('["fill(locf)"]');
+    expect(screen.getByRole('button', {name: 'Add Transformation'})).toBeEnabled();
   });
 
   it.each([
