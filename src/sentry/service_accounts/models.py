@@ -56,6 +56,8 @@ class ServiceAccount(ControlOutboxProducingModel):
     """
 
     __relocation_scope__ = RelocationScope.Organization
+    # The outboxes only clear the cell cache, so they can drain asynchronously.
+    default_flush = False
 
     organization_id = HybridCloudForeignKey("sentry.Organization", null=False, on_delete="CASCADE")
     name = models.CharField(max_length=MAX_NAME_LENGTH)
@@ -98,6 +100,7 @@ class ServiceAccountProject(DefaultFieldsModel, ControlOutboxProducingModel):
     """
 
     __relocation_scope__ = RelocationScope.Organization
+    default_flush = False
 
     objects: ClassVar[ControlOutboxProducingManager[Self]] = ControlOutboxProducingManager()
 
