@@ -17,6 +17,7 @@ import type {TraceItemDataset} from 'sentry/views/explore/types';
 
 type FillMethod = 'zero' | 'locf' | 'linear';
 type SmoothMethod = 'sma' | 'ema' | 'asap';
+type TransformationLayout = 'stacked' | 'inline';
 type Transformation =
   | {kind: 'fill'; method: FillMethod}
   | {kind: 'smooth'; method: 'sma'; window: number}
@@ -111,31 +112,47 @@ interface Props {
     | TraceItemDataset.LOGS
     | TraceItemDataset.TRACEMETRICS;
   transformations: readonly string[];
-  children?: (parts: {
-    addTrigger: React.ReactNode;
-    rows: React.ReactNode;
-  }) => React.ReactNode;
-  layout?: 'stacked' | 'inline';
 }
 
 export function VisualizeTransformations({
   transformations,
   onChange,
   traceItemDataset,
-  children,
-  layout = 'stacked',
 }: Props) {
   const organization = useOrganization();
   if (!organization.features.includes('explore-interpolation-and-smoothing')) {
     return null;
   }
 
-  const kindOptions = KIND_OPTIONS.map(option => ({
-    ...option,
-    disabled: transformations.some(raw => parseFunction(raw)?.name === option.value),
-  }));
+  return (
+    <Stack gap="sm">
+      <VisualizeTransformationRows
+        transformations={transformations}
+        onChange={onChange}
+        traceItemDataset={traceItemDataset}
+      />
+      <AddTransformationButton
+        transformations={transformations}
+        onChange={onChange}
+        traceItemDataset={traceItemDataset}
+      />
+    </Stack>
+  );
+}
 
-  const rows = transformations.length ? (
+interface TransformationRowsProps extends Props {
+  layout?: TransformationLayout;
+}
+
+export function VisualizeTransformationRows({
+  transformations,
+  onChange,
+  traceItemDataset,
+  layout = 'stacked',
+}: TransformationRowsProps) {
+  const organization = useOrganization();
+
+  return transformations.length ? (
     <Stack gap="sm">
       {transformations.map((raw, index) => {
         const transformation = parseTransformation(raw);
@@ -198,8 +215,20 @@ export function VisualizeTransformations({
       })}
     </Stack>
   ) : null;
+}
 
-  const addTrigger = (
+export function AddTransformationButton({
+  transformations,
+  onChange,
+  traceItemDataset,
+}: Props) {
+  const organization = useOrganization();
+  const kindOptions = KIND_OPTIONS.map(option => ({
+    ...option,
+    disabled: transformations.some(raw => parseFunction(raw)?.name === option.value),
+  }));
+
+  return (
     <CompactSelect
       options={kindOptions}
       disabled={transformations.length >= KIND_OPTIONS.length}
@@ -225,20 +254,11 @@ export function VisualizeTransformations({
       }}
     />
   );
-
-  return children ? (
-    children({addTrigger, rows})
-  ) : (
-    <Stack gap="sm">
-      {rows}
-      {addTrigger}
-    </Stack>
-  );
 }
 
 interface TransformationRowProps {
   index: number;
-  layout: Props['layout'];
+  layout: TransformationLayout;
   onChange: (value: Transformation) => void;
   onRemove: () => void;
   onTypeChange: (kind: Transformation['kind']) => void;
@@ -257,15 +277,6 @@ function TransformationRow({
 }: TransformationRowProps) {
   const organization = useOrganization();
   const analyticsParams = {traceItemDataset, transformation_index: index};
-  const parameters = transformation?.kind === 'smooth' && (
-    <SmoothingSettings
-      transformation={transformation}
-      index={index}
-      traceItemDataset={traceItemDataset}
-      layout={layout}
-      onChange={onChange}
-    />
-  );
   return (
     <Stack
       role="group"
@@ -336,7 +347,15 @@ function TransformationRow({
           ) : (
             <Text size="sm">{t('Unsupported transformation')}</Text>
           )}
-          {layout === 'inline' ? parameters : null}
+          {layout === 'inline' && transformation?.kind === 'smooth' ? (
+            <SmoothingSettings
+              transformation={transformation}
+              index={index}
+              traceItemDataset={traceItemDataset}
+              layout={layout}
+              onChange={onChange}
+            />
+          ) : null}
         </Flex>
         <Button
           variant="transparent"
@@ -355,14 +374,22 @@ function TransformationRow({
           onClick={onRemove}
         />
       </Flex>
-      {layout === 'stacked' ? parameters : null}
+      {layout === 'stacked' && transformation?.kind === 'smooth' ? (
+        <SmoothingSettings
+          transformation={transformation}
+          index={index}
+          traceItemDataset={traceItemDataset}
+          layout={layout}
+          onChange={onChange}
+        />
+      ) : null}
     </Stack>
   );
 }
 
 interface SmoothingSettingsProps {
   index: number;
-  layout: Props['layout'];
+  layout: TransformationLayout;
   onChange: (value: SmoothTransformation) => void;
   traceItemDataset: Props['traceItemDataset'];
   transformation: SmoothTransformation;
