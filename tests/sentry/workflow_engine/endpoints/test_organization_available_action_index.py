@@ -8,7 +8,6 @@ from sentry.integrations.types import IntegrationProviderSlug
 from sentry.notifications.notification_action.action_handler_registry.base import (
     IntegrationActionHandler,
 )
-from sentry.seer.workflows.action import SeerWorkflowActionHandler
 from sentry.silo.base import SiloMode
 from sentry.testutils.cases import APITestCase
 from sentry.testutils.helpers import with_feature
@@ -38,7 +37,7 @@ class OrganizationAvailableActionAPITestCase(APITestCase):
         self.registry_patcher.stop()
 
     def test_seer_workflow_hidden_without_automation_feature(self) -> None:
-        self.registry.register(Action.Type.SEER_WORKFLOW)(SeerWorkflowActionHandler)
+        self.registry.register(Action.Type.SEER_WORKFLOW)(ActionHandler)
 
         with self.feature({"organizations:seer-automations": False}):
             response = self.get_success_response(self.organization.slug)
@@ -46,7 +45,7 @@ class OrganizationAvailableActionAPITestCase(APITestCase):
         assert response.data == []
 
     def test_seer_workflow_hidden_with_automation_feature(self) -> None:
-        self.registry.register(Action.Type.SEER_WORKFLOW)(SeerWorkflowActionHandler)
+        self.registry.register(Action.Type.SEER_WORKFLOW)(ActionHandler)
 
         with self.feature("organizations:seer-automations"):
             response = self.get_success_response(self.organization.slug)
