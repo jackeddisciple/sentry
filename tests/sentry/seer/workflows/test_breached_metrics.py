@@ -21,10 +21,10 @@ from sentry.seer.models.workflow import (
 )
 from sentry.seer.workflows.breached_metrics import (
     AcceptedMetricBreach,
+    BreachedMetricWorkflow,
     IgnoredMetricBreach,
     MetricBreachWorkflowOrigin,
     RejectedMetricBreach,
-    accept_metric_breach,
 )
 from sentry.services.eventstore.models import GroupEvent
 from sentry.snuba.dataset import Dataset
@@ -144,6 +144,21 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert replayed.id == existing.id
         assert SeerWorkflowRun.objects.count() == 1
 
+    def test_accept_uses_latest_scope_from_the_locked_config(self) -> None:
+        workflow = BreachedMetricWorkflow(self.config)
+        SeerWorkflowConfig.objects.filter(id=self.config.id).update(
+            filters={"all_projects": True, "environments": ["staging"]}
+        )
+
+        result = workflow.accept(
+            self.group,
+            self.breach_event(),
+            origin=MetricBreachWorkflowOrigin(self.workflow.id, self.action.id),
+        )
+
+        assert result == IgnoredMetricBreach("out_of_scope")
+        assert not SeerWorkflowRun.objects.exists()
+
     def test_new_issue_without_an_open_period_can_start_a_run(self) -> None:
         event = self.breach_event()
         assert not GroupOpenPeriod.objects.filter(group=self.group).exists()
@@ -169,10 +184,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         event = self.breach_event()
 
         first = self.accept(event)
-        second = accept_metric_breach(
+        second = BreachedMetricWorkflow(config).accept(
             self.group,
             event,
-            config_id=config.id,
             origin=MetricBreachWorkflowOrigin(self.workflow.id, action.id),
         )
 
@@ -192,18 +206,16 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         self.create_data_condition_group_action(action=self.action, condition_group=conditions)
         event = self.breach_event()
 
-        first = accept_metric_breach(
+        first = BreachedMetricWorkflow(self.config).accept(
             self.group,
             event,
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
         )
-        second = accept_metric_breach(
+        second = BreachedMetricWorkflow(self.config).accept(
             self.group,
             event,
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=other_workflow.id, action_id=self.action.id
             ),
@@ -231,10 +243,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         event = self.breach_event()
 
         first = self.accept(event)
-        second = accept_metric_breach(
+        second = BreachedMetricWorkflow(self.config).accept(
             self.group,
             event,
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(second_workflow.id, second_action.id),
         )
 
@@ -261,7 +272,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert DetectorWorkflow.objects.filter(workflow=self.workflow).count() == 2
         assert run.executions.get().extras["result"] == "noop"
 
-    @mock.patch("sentry.seer.workflows.breached_metrics.admission_rejection_reason")
+    @mock.patch("sentry.seer.workflows.workflow.SeerWorkflow.admission_rejection_reason")
     def test_unconnected_monitor_is_ignored_even_with_org_wide_routing_enabled(
         self, admission: mock.MagicMock
     ) -> None:
@@ -310,18 +321,16 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
     def test_acceptance_result_distinguishes_new_work_from_replay(self) -> None:
         event = self.breach_event()
 
-        accepted = accept_metric_breach(
+        accepted = BreachedMetricWorkflow(self.config).accept(
             self.group,
             event,
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
         )
-        replayed = accept_metric_breach(
+        replayed = BreachedMetricWorkflow(self.config).accept(
             self.group,
             event,
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
@@ -338,10 +347,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
     def test_ignored_configuration_reports_reason_without_starting_work(self) -> None:
         self.config.update(enabled=False)
 
-        rejected = accept_metric_breach(
+        rejected = BreachedMetricWorkflow(self.config).accept(
             self.group,
             self.breach_event(),
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
@@ -355,10 +363,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         event = self.breach_event()
         self.group.update(type=1)
 
-        rejected = accept_metric_breach(
+        rejected = BreachedMetricWorkflow(self.config).accept(
             self.group,
             event,
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
@@ -372,10 +379,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert event.occurrence is not None
         event.occurrence = replace(event.occurrence, evidence_data={})
 
-        rejected = accept_metric_breach(
+        rejected = BreachedMetricWorkflow(self.config).accept(
             self.group,
             event,
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
@@ -386,10 +392,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
 
     def test_ignored_feature_reports_reason(self) -> None:
         with self.feature({"organizations:seer-automations": False}):
-            rejected = accept_metric_breach(
+            rejected = BreachedMetricWorkflow(self.config).accept(
                 self.group,
                 self.breach_event(),
-                config_id=self.config.id,
                 origin=MetricBreachWorkflowOrigin(
                     workflow_id=self.workflow.id, action_id=self.action.id
                 ),
@@ -401,10 +406,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
     def test_ignored_scope_reports_reason(self) -> None:
         self.config.update(filters={"all_projects": False})
 
-        rejected = accept_metric_breach(
+        rejected = BreachedMetricWorkflow(self.config).accept(
             self.group,
             self.breach_event(),
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
@@ -416,10 +420,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
     def test_ignored_workflow_reports_reason(self) -> None:
         self.workflow.update(enabled=False)
 
-        rejected = accept_metric_breach(
+        rejected = BreachedMetricWorkflow(self.config).accept(
             self.group,
             self.breach_event(),
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
@@ -479,16 +482,15 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert SeerWorkflowRun.objects.count() == 1
         assert SeerWorkflowRunExecution.objects.get().run_id == run.id
 
-    @mock.patch("sentry.seer.workflows.breached_metrics.admission_rejection_reason")
+    @mock.patch("sentry.seer.workflows.workflow.SeerWorkflow.admission_rejection_reason")
     def test_environment_mismatch_is_ignored_before_admission(
         self, admission: mock.MagicMock
     ) -> None:
         self.config.update(filters={"all_projects": True, "environments": ["staging"]})
 
-        result = accept_metric_breach(
+        result = BreachedMetricWorkflow(self.config).accept(
             self.group,
             self.breach_event(),
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
@@ -499,14 +501,13 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert not SeerWorkflowRunExecution.objects.exists()
         admission.assert_not_called()
 
-    @mock.patch("sentry.seer.workflows.breached_metrics.admission_rejection_reason")
+    @mock.patch("sentry.seer.workflows.workflow.SeerWorkflow.admission_rejection_reason")
     def test_project_mismatch_is_ignored_before_admission(self, admission: mock.MagicMock) -> None:
         self.config.update(filters={"all_projects": False})
 
-        result = accept_metric_breach(
+        result = BreachedMetricWorkflow(self.config).accept(
             self.group,
             self.breach_event(),
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
@@ -518,7 +519,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         admission.assert_not_called()
 
     @mock.patch(
-        "sentry.seer.workflows.breached_metrics.admission_rejection_reason",
+        "sentry.seer.workflows.workflow.SeerWorkflow.admission_rejection_reason",
         return_value="quota_exceeded",
     )
     def test_eligible_admission_rejection_records_run_without_execution(
@@ -528,10 +529,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         event = self.breach_event()
 
         with self.capture_on_commit_callbacks(execute=True):
-            result = accept_metric_breach(
+            result = BreachedMetricWorkflow(self.config).accept(
                 self.group,
                 event,
-                config_id=self.config.id,
                 origin=MetricBreachWorkflowOrigin(
                     workflow_id=self.workflow.id, action_id=self.action.id
                 ),
@@ -552,39 +552,36 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert run.extras["trigger"]["event_id"] == event.event_id
         assert run.extras["config_version"] == self.config.version
         assert not SeerWorkflowRunExecution.objects.exists()
-        admission.assert_called_once_with(self.config)
+        admission.assert_called_once_with()
 
     def test_rejected_trigger_is_not_readmitted_for_the_same_or_another_event(self) -> None:
         event = self.breach_event()
         with mock.patch(
-            "sentry.seer.workflows.breached_metrics.admission_rejection_reason",
+            "sentry.seer.workflows.workflow.SeerWorkflow.admission_rejection_reason",
             return_value="quota_exceeded",
         ):
-            first = accept_metric_breach(
+            first = BreachedMetricWorkflow(self.config).accept(
                 self.group,
                 event,
-                config_id=self.config.id,
                 origin=MetricBreachWorkflowOrigin(
                     workflow_id=self.workflow.id, action_id=self.action.id
                 ),
             )
 
         with mock.patch(
-            "sentry.seer.workflows.breached_metrics.admission_rejection_reason",
+            "sentry.seer.workflows.workflow.SeerWorkflow.admission_rejection_reason",
             return_value=None,
         ) as admission:
-            replayed = accept_metric_breach(
+            replayed = BreachedMetricWorkflow(self.config).accept(
                 self.group,
                 event,
-                config_id=self.config.id,
                 origin=MetricBreachWorkflowOrigin(
                     workflow_id=self.workflow.id, action_id=self.action.id
                 ),
             )
-            later = accept_metric_breach(
+            later = BreachedMetricWorkflow(self.config).accept(
                 self.group,
                 self.breach_event(),
-                config_id=self.config.id,
                 origin=MetricBreachWorkflowOrigin(
                     workflow_id=self.workflow.id, action_id=self.action.id
                 ),
@@ -603,7 +600,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert SeerWorkflowRun.objects.count() == 1
         assert not SeerWorkflowRunExecution.objects.exists()
 
-    @mock.patch("sentry.seer.workflows.breached_metrics.admission_rejection_reason")
+    @mock.patch("sentry.seer.workflows.workflow.SeerWorkflow.admission_rejection_reason")
     def test_wfe_action_ignores_environment_mismatch_without_history(
         self, admission: mock.MagicMock
     ) -> None:
@@ -616,7 +613,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         admission.assert_not_called()
 
     @mock.patch(
-        "sentry.seer.workflows.breached_metrics.admission_rejection_reason",
+        "sentry.seer.workflows.workflow.SeerWorkflow.admission_rejection_reason",
         return_value="quota_exceeded",
     )
     def test_wfe_action_records_eligible_rejection_without_execution(
@@ -634,7 +631,7 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         assert run.extras["trigger"]["action_id"] == self.action.id
         assert run.extras["trigger"]["event_id"] == event.event_id
         assert not SeerWorkflowRunExecution.objects.exists()
-        admission.assert_called_once_with(self.config)
+        admission.assert_called_once_with()
 
     def test_other_organization_configuration_does_not_accept_the_breach(self) -> None:
         other_action = self.create_action(type=Action.Type.SEER_WORKFLOW)
@@ -710,10 +707,9 @@ class BreachedMetricWorkflowTest(OccurrenceTestMixin, TestCase):
         config: SeerWorkflowConfig | None = None,
         action: Action | None = None,
     ) -> SeerWorkflowRun | None:
-        result = accept_metric_breach(
+        result = BreachedMetricWorkflow(config or self.config).accept(
             self.group,
             event,
-            config_id=(config or self.config).id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=(action or self.action).id
             ),

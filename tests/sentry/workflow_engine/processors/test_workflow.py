@@ -10,7 +10,10 @@ from sentry.models.activity import Activity
 from sentry.models.environment import Environment
 from sentry.models.groupenvironment import GroupEnvironment
 from sentry.seer.models.workflow import SeerWorkflowStrategy
-from sentry.seer.workflows.breached_metrics import MetricBreachWorkflowOrigin
+from sentry.seer.workflows.breached_metrics import (
+    BreachedMetricWorkflow,
+    MetricBreachWorkflowOrigin,
+)
 from sentry.services.eventstore.models import GroupEvent
 from sentry.testutils.factories import Factories
 from sentry.testutils.helpers.datetime import before_now, freeze_time
@@ -1410,7 +1413,7 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
             trigger_actions=[self.action],
         )
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_evaluated_action_targets_its_bound_config(self, mock_accept: MagicMock) -> None:
         Factories.create_seer_workflow_config(
             organization=self.organization,
@@ -1440,15 +1443,15 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
 
         assert _triggered_workflow_ids(result) == {self.workflow.id}
         mock_accept.assert_called_once_with(
+            BreachedMetricWorkflow(self.config),
             self.group,
             self.group_event,
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=self.workflow.id, action_id=self.action.id
             ),
         )
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_distinct_actions_resolve_bindings_to_the_same_config(
         self, mock_accept: MagicMock
     ) -> None:
@@ -1474,13 +1477,13 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
             )
 
         assert mock_accept.call_count == 2
-        assert {call.kwargs["config_id"] for call in mock_accept.call_args_list} == {self.config.id}
+        assert {call.args[0].config.id for call in mock_accept.call_args_list} == {self.config.id}
         assert {call.kwargs["origin"].action_id for call in mock_accept.call_args_list} == {
             self.action.id,
             second_action.id,
         }
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_shared_action_collapses_two_matching_workflows(self, mock_accept: MagicMock) -> None:
         other_workflow = self.create_workflow(
             when_condition_group=self.create_data_condition_group()
@@ -1513,15 +1516,15 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
 
         assert _triggered_workflow_ids(result) == {self.workflow.id, other_workflow.id}
         mock_accept.assert_called_once_with(
+            BreachedMetricWorkflow(self.config),
             self.group,
             self.group_event,
-            config_id=self.config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=min(self.workflow.id, other_workflow.id), action_id=self.action.id
             ),
         )
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_separate_actions_preserve_each_workflow(self, mock_accept: MagicMock) -> None:
         other_workflow = self.create_workflow(
             when_condition_group=self.create_data_condition_group()
@@ -1565,17 +1568,17 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
         mock_accept.assert_has_calls(
             [
                 call(
+                    BreachedMetricWorkflow(self.config),
                     self.group,
                     self.group_event,
-                    config_id=self.config.id,
                     origin=MetricBreachWorkflowOrigin(
                         workflow_id=self.workflow.id, action_id=self.action.id
                     ),
                 ),
                 call(
+                    BreachedMetricWorkflow(other_config),
                     self.group,
                     self.group_event,
-                    config_id=other_config.id,
                     origin=MetricBreachWorkflowOrigin(
                         workflow_id=other_workflow.id, action_id=other_action.id
                     ),
@@ -1584,7 +1587,7 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
             any_order=True,
         )
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_multiple_detectors_feed_one_workflow_and_automation(
         self, mock_accept: MagicMock
     ) -> None:
@@ -1628,17 +1631,17 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
         mock_accept.assert_has_calls(
             [
                 call(
+                    BreachedMetricWorkflow(self.config),
                     self.group,
                     self.group_event,
-                    config_id=self.config.id,
                     origin=MetricBreachWorkflowOrigin(
                         workflow_id=self.workflow.id, action_id=self.action.id
                     ),
                 ),
                 call(
+                    BreachedMetricWorkflow(self.config),
                     group,
                     event,
-                    config_id=self.config.id,
                     origin=MetricBreachWorkflowOrigin(
                         workflow_id=self.workflow.id, action_id=self.action.id
                     ),
@@ -1647,7 +1650,7 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
             any_order=True,
         )
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_unconnected_detector_does_not_inherit_metric_automation(
         self, mock_accept: MagicMock
     ) -> None:
@@ -1672,7 +1675,7 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
         assert _triggered_workflow_ids(result) == set()
         mock_accept.assert_not_called()
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_detector_attachment_selects_specialized_automation(
         self, mock_accept: MagicMock
     ) -> None:
@@ -1716,15 +1719,15 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
 
         assert _triggered_workflow_ids(result) == {specialized_workflow.id}
         mock_accept.assert_called_once_with(
+            BreachedMetricWorkflow(config),
             self.group,
             self.group_event,
-            config_id=config.id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=specialized_workflow.id, action_id=action.id
             ),
         )
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_distinct_bound_configs_both_dispatch(self, mock_accept: MagicMock) -> None:
         second_action = self.create_action(type=Action.Type.SEER_WORKFLOW, config={}, data={})
         self.create_workflow_action(self.workflow, action=second_action)
@@ -1756,17 +1759,17 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
         mock_accept.assert_has_calls(
             [
                 call(
+                    BreachedMetricWorkflow(self.config),
                     self.group,
                     self.group_event,
-                    config_id=self.config.id,
                     origin=MetricBreachWorkflowOrigin(
                         workflow_id=self.workflow.id, action_id=self.action.id
                     ),
                 ),
                 call(
+                    BreachedMetricWorkflow(second_config),
                     self.group,
                     self.group_event,
-                    config_id=second_config.id,
                     origin=MetricBreachWorkflowOrigin(
                         workflow_id=self.workflow.id, action_id=second_action.id
                     ),
@@ -1775,7 +1778,7 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
             any_order=True,
         )
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_disabled_workflow_does_not_dispatch(self, mock_accept: MagicMock) -> None:
         self.workflow.update(enabled=False)
 
@@ -1799,7 +1802,7 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
         assert _triggered_workflow_ids(result) == set()
         mock_accept.assert_not_called()
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_unrelated_activity_does_not_match_trigger(self, mock_accept: MagicMock) -> None:
         activity = Activity(
             group=self.group, project=self.project, type=ActivityType.SET_RESOLVED.value
@@ -1816,7 +1819,7 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
         assert _triggered_workflow_ids(result) == set()
         mock_accept.assert_not_called()
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_action_filter_blocks_dispatch(self, mock_accept: MagicMock) -> None:
         self.action_filter.update(comparison={"value": ErrorGroupType.slug})
 
@@ -1840,7 +1843,7 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
         assert _triggered_workflow_ids(result) == {self.workflow.id}
         mock_accept.assert_not_called()
 
-    @patch("sentry.seer.workflows.action.accept_metric_breach")
+    @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_cross_organization_binding_is_ignored(self, mock_accept: MagicMock) -> None:
         self.config.update(organization=self.create_organization())
 

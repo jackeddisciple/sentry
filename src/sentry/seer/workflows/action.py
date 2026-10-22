@@ -4,9 +4,9 @@ from typing import override
 from sentry.seer.models.workflow import SeerWorkflowTriggerBinding
 from sentry.seer.workflows.breached_metrics import (
     AcceptedMetricBreach,
+    BreachedMetricWorkflow,
     MetricBreachWorkflowOrigin,
     RejectedMetricBreach,
-    accept_metric_breach,
 )
 from sentry.services.eventstore.models import GroupEvent
 from sentry.workflow_engine.models import Action
@@ -30,21 +30,20 @@ class SeerWorkflowActionHandler(ActionHandler):
         if not isinstance(event, GroupEvent) or state is None or not state["is_new"]:
             return
         group = invocation.event_data.group
-        config_id = (
+        binding = (
             SeerWorkflowTriggerBinding.objects.filter(
                 workflow_config__organization_id=group.project.organization_id,
                 trigger_action=invocation.action,
             )
-            .values_list("workflow_config_id", flat=True)
+            .select_related("workflow_config")
             .first()
         )
-        if config_id is None:
+        if binding is None:
             return
 
-        admission = accept_metric_breach(
+        admission = BreachedMetricWorkflow(binding.workflow_config).accept(
             group,
             event,
-            config_id=config_id,
             origin=MetricBreachWorkflowOrigin(
                 workflow_id=invocation.workflow_id, action_id=invocation.action.id
             ),
