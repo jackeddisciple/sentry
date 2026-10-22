@@ -126,15 +126,37 @@ describe('VisualizeTransformations', () => {
 
     await userEvent.click(screen.getByRole('button', {name: 'Smoothing method'}));
     await userEvent.click(screen.getByRole('option', {name: 'EMA'}));
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '["fill(locf)","smooth(ema,1)"]'
+    );
     await userEvent.click(screen.getByRole('button', {name: 'Smoothing Factor'}));
     await userEvent.click(screen.getByRole('option', {name: '75%'}));
     expect(screen.getByRole('status')).toHaveTextContent(
-      '["fill(locf)","smooth(ema,10,0.75)"]'
+      '["fill(locf)","smooth(ema,1,0.75)"]'
+    );
+    expect(screen.getByRole('button', {name: 'Window Size'})).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', {name: 'Smoothing Factor'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Clear'}));
+    expect(screen.getByRole('button', {name: 'Smoothing Factor'})).toHaveTextContent(
+      'Auto'
+    );
+    expect(screen.getByRole('button', {name: 'Window Size'})).toBeEnabled();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '["fill(locf)","smooth(ema,1)"]'
+    );
+
+    await userEvent.click(screen.getByRole('button', {name: 'Smoothing method'}));
+    await userEvent.click(screen.getByRole('option', {name: 'SMA'}));
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '["fill(locf)","smooth(sma,1)"]'
     );
 
     await userEvent.click(screen.getByRole('button', {name: 'Smoothing method'}));
     await userEvent.click(screen.getByRole('option', {name: 'ASAP'}));
-    expect(screen.getByRole('button', {name: 'Max Window Size'})).toHaveTextContent('5');
+    expect(screen.getByRole('button', {name: 'Max Window Size'})).toHaveTextContent(
+      'Auto'
+    );
     expect(
       screen.queryByRole('button', {name: 'Smoothing Factor'})
     ).not.toBeInTheDocument();
@@ -142,6 +164,12 @@ describe('VisualizeTransformations', () => {
     await userEvent.click(screen.getByRole('option', {name: '7'}));
     expect(screen.getByRole('status')).toHaveTextContent(
       '["fill(locf)","smooth(asap,7)"]'
+    );
+
+    await userEvent.click(screen.getByRole('button', {name: 'Smoothing method'}));
+    await userEvent.click(screen.getByRole('option', {name: 'SMA'}));
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '["fill(locf)","smooth(sma,3)"]'
     );
   });
 
@@ -157,7 +185,7 @@ describe('VisualizeTransformations', () => {
     }
   );
 
-  it('restores an automatic ASAP window and allows an explicit value', async () => {
+  it('allows setting an ASAP maximum and returning to Auto', async () => {
     render(<Example initial={['smooth(asap)']} />, {organization});
     expect(screen.getByRole('button', {name: 'Max Window Size'})).toHaveTextContent(
       'Auto'
@@ -165,13 +193,9 @@ describe('VisualizeTransformations', () => {
     await userEvent.click(screen.getByRole('button', {name: 'Max Window Size'}));
     await userEvent.click(screen.getByRole('option', {name: '3'}));
     expect(screen.getByRole('status')).toHaveTextContent('["smooth(asap,3)"]');
-  });
 
-  it('preserves stored transformations while the feature is disabled', () => {
-    render(<Example initial={['fill(zero)']} />);
-    expect(
-      screen.queryByRole('button', {name: 'Add Transformation'})
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('["fill(zero)"]');
+    await userEvent.click(screen.getByRole('button', {name: 'Max Window Size'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Clear'}));
+    expect(screen.getByRole('status')).toHaveTextContent('["smooth(asap)"]');
   });
 });
