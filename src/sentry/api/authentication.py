@@ -49,6 +49,7 @@ from sentry.sentry_apps.models.sentry_app import SentryApp
 from sentry.sentry_apps.models.sentry_app_installation import SentryAppInstallation
 from sentry.sentry_apps.token_exchange.util import GrantTypes
 from sentry.silo.base import SiloLimit, SiloMode
+from sentry.types.superuser import SuperuserAccess
 from sentry.users.models.user import User
 from sentry.users.services.user import RpcUser
 from sentry.users.services.user.service import user_service
@@ -986,7 +987,11 @@ class ViewerContextAuthentication(BaseAuthentication):
         if vc is not None:
             actor = vc.actor
             user_id = actor.actor_id if actor.type == ActorType.USER else actor.delegated_user_id
-            superuser = actor.superuser
+            superuser = (
+                SuperuserAccess(expires_at=actor.superuser.expires_at)
+                if actor.superuser is not None
+                else None
+            )
         else:
             user_id = None
             superuser = None

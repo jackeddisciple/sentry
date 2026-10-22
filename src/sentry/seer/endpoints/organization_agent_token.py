@@ -28,6 +28,7 @@ from sentry.apidocs.parameters import GlobalParams
 from sentry.models.organization import Organization
 from sentry.seer import agent_token
 from sentry.seer.endpoints.agent_request import AgentTokenRequestData, AgentTokenRequestSerializer
+from sentry.types.superuser import SuperuserAccess
 from sentry.viewer_context import ActorType, get_viewer_context
 
 
@@ -111,7 +112,11 @@ class OrganizationAgentTokenEndpoint(OrganizationEndpoint):
             viewer_user_id = (
                 actor.actor_id if actor.type == ActorType.USER else actor.delegated_user_id
             )
-            viewer_superuser = actor.superuser
+            viewer_superuser = (
+                SuperuserAccess(expires_at=actor.superuser.expires_at)
+                if actor.superuser is not None
+                else None
+            )
         else:
             viewer_user_id = None
             viewer_superuser = None

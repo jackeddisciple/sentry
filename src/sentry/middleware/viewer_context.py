@@ -13,6 +13,7 @@ from sentry.utils.auth import is_user_from_viewer_context
 from sentry.viewer_context import (
     Actor,
     ActorType,
+    SuperuserAccess,
     ViewerContext,
     viewer_context_from_header,
     viewer_context_scope,
@@ -100,7 +101,11 @@ def _viewer_context_from_request(request: HttpRequest) -> ViewerContext:
 
     # An agent token is a non-user actor: the request user is anonymous, so read the
     # delegating user it acts on behalf of from the credential.
-    superuser = auth.superuser if isinstance(auth, AuthenticatedToken) else None
+    superuser = (
+        SuperuserAccess(expires_at=auth.superuser.expires_at)
+        if isinstance(auth, AuthenticatedToken) and auth.superuser is not None
+        else None
+    )
     if auth is not None and is_agent_auth(auth):
         actor = Actor(type=ActorType.AGENT, delegated_user_id=auth.user_id, superuser=superuser)
     else:
