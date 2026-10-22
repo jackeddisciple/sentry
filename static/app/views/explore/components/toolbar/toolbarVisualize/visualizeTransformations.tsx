@@ -10,7 +10,10 @@ import {Text} from '@sentry/scraps/text';
 import {PageFilterBar} from 'sentry/components/pageFilters/pageFilterBar';
 import {t} from 'sentry/locale';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import {exploreAnalyticsEventMap} from 'sentry/utils/analytics/exploreAnalyticsEvents';
+import {
+  exploreAnalyticsEventMap,
+  type ExploreAnalyticsEventParameters,
+} from 'sentry/utils/analytics/exploreAnalyticsEvents';
 import {parseFunction} from 'sentry/utils/discover/fields';
 import {useOrganization} from 'sentry/utils/useOrganization';
 import type {TraceItemDataset} from 'sentry/views/explore/types';
@@ -101,8 +104,8 @@ type SmoothTransformation = Extract<Transformation, {kind: 'smooth'}>;
 
 const SMOOTH_DEFAULTS: Record<SmoothMethod, SmoothTransformation> = {
   sma: {kind: 'smooth', method: 'sma', window: 3},
-  ema: {kind: 'smooth', method: 'ema', window: 10, factor: 0.25},
-  asap: {kind: 'smooth', method: 'asap', window: 5},
+  ema: {kind: 'smooth', method: 'ema', window: 10},
+  asap: {kind: 'smooth', method: 'asap'},
 };
 
 interface Props {
@@ -119,11 +122,6 @@ export function VisualizeTransformations({
   onChange,
   traceItemDataset,
 }: Props) {
-  const organization = useOrganization();
-  if (!organization.features.includes('explore-interpolation-and-smoothing')) {
-    return null;
-  }
-
   return (
     <Stack gap="sm">
       <VisualizeTransformationRows
@@ -277,6 +275,13 @@ function TransformationRow({
 }: TransformationRowProps) {
   const organization = useOrganization();
   const analyticsParams = {traceItemDataset, transformation_index: index};
+  const removalAnalyticsParams = {
+    ...analyticsParams,
+    transformation_type: transformation?.kind ?? 'unsupported',
+  } satisfies Omit<
+    ExploreAnalyticsEventParameters['explore.visualize.transformation.removed'],
+    'organization'
+  >;
   return (
     <Stack
       role="group"
@@ -338,7 +343,11 @@ function TransformationRow({
                         transformation_type: 'smooth',
                         method: value,
                       });
-                      onChange(SMOOTH_DEFAULTS[value]);
+                      onChange(
+                        value === 'asap' || transformation.method === 'asap'
+                          ? SMOOTH_DEFAULTS[value]
+                          : {...SMOOTH_DEFAULTS[value], window: transformation.window}
+                      );
                     }
                   }}
                 />
@@ -364,13 +373,9 @@ function TransformationRow({
           aria-label={t('Remove transformation')}
           analyticsEventKey="explore.visualize.transformation.removed"
           analyticsEventName={
-            exploreAnalyticsEventMap['explore.visualize.transformation.removed'] ??
-            undefined
+            exploreAnalyticsEventMap['explore.visualize.transformation.removed']
           }
-          analyticsParams={{
-            ...analyticsParams,
-            transformation_type: transformation?.kind ?? 'unsupported',
-          }}
+          analyticsParams={removalAnalyticsParams}
           onClick={onRemove}
         />
       </Flex>
@@ -419,21 +424,31 @@ function SmoothingSettings({
         <CompactSelect
           options={WINDOW_OPTIONS}
           value={transformation.window}
+          clearable={transformation.method === 'asap'}
+          multiple={false}
+          disabled={
+            transformation.method === 'ema' && transformation.factor !== undefined
+          }
           trigger={props => (
             <OverlayTrigger.Button {...props} aria-label={windowLabel}>
               {transformation.window === undefined ? t('Auto') : props.children}
             </OverlayTrigger.Button>
           )}
-          onChange={({value}) => {
-            if (value !== transformation.window) {
+          onChange={(option: SelectOption<number> | undefined) => {
+            const window = option?.value;
+            if (window !== transformation.window) {
               trackAnalytics('explore.visualize.transformation.window_changed', {
                 organization,
                 ...analyticsParams,
                 method: transformation.method,
-                window: value,
+                window: window ?? null,
               });
             }
-            onChange({...transformation, window: value});
+            if (transformation.method === 'asap') {
+              onChange({...transformation, window});
+            } else if (window !== undefined) {
+              onChange({...transformation, window});
+            }
           }}
         />
       </Flex>
@@ -449,20 +464,22 @@ function SmoothingSettings({
           <CompactSelect
             options={FACTOR_OPTIONS}
             value={transformation.factor}
+            clearable
             trigger={props => (
               <OverlayTrigger.Button {...props} aria-label={t('Smoothing Factor')}>
                 {transformation.factor === undefined ? t('Auto') : props.children}
               </OverlayTrigger.Button>
             )}
-            onChange={({value}) => {
-              if (value !== transformation.factor) {
+            onChange={option => {
+              const factor = option?.value;
+              if (factor !== transformation.factor) {
                 trackAnalytics('explore.visualize.transformation.factor_changed', {
                   organization,
                   ...analyticsParams,
-                  factor: value,
+                  factor: factor ?? null,
                 });
               }
-              onChange({...transformation, factor: value});
+              onChange({...transformation, factor});
             }}
           />
         </Flex>
