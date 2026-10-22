@@ -27,6 +27,7 @@ from sentry.workflow_engine.defaults.detectors import ensure_default_all_project
 from sentry.workflow_engine.models import Action, DataConditionGroup
 from sentry.workflow_engine.models.data_condition import Condition
 from sentry.workflow_engine.models.workflow_fire_history import WorkflowFireHistory
+from sentry.workflow_engine.processors.action import is_action_permitted
 from sentry.workflow_engine.processors.data_condition_group import (
     get_data_conditions_for_group,
 )
@@ -1412,6 +1413,13 @@ class TestMetricBreachWorkflow(BaseWorkflowTest):
             enabled=True,
             trigger_actions=[self.action],
         )
+
+    def test_registered_seer_action_requires_automation_feature(self) -> None:
+        with self.feature({"organizations:seer-automations": False}):
+            assert not is_action_permitted(Action.Type.SEER_WORKFLOW, self.organization)
+
+        with self.feature("organizations:seer-automations"):
+            assert is_action_permitted(Action.Type.SEER_WORKFLOW, self.organization)
 
     @patch("sentry.seer.workflows.action.BreachedMetricWorkflow.accept", autospec=True)
     def test_evaluated_action_targets_its_bound_config(self, mock_accept: MagicMock) -> None:

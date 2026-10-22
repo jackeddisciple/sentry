@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 @action_handler_registry.register(Action.Type.SEER_WORKFLOW)
 class SeerWorkflowActionHandler(ActionHandler):
     group = ActionHandler.Group.OTHER
+    required_features = ("organizations:seer-automations",)
     config_schema = {"type": "object", "properties": {}, "additionalProperties": False}
     data_schema = {"type": "object", "properties": {}, "additionalProperties": False}
 
