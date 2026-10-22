@@ -42,6 +42,13 @@ class GenerationId(NamedTuple):
     pipeline_hash: str
 
 
+@dataclass
+class DrainStats:
+    """Counts log entries run through the pipeline; still readable if the drain raises."""
+
+    entries: int = 0
+
+
 class ProcessingStrategy(enum.Enum):
     SYNC = "sync"  # process all pending actions now
     ASYNC = "async"  # schedule a task to process all pending actions
@@ -153,6 +160,7 @@ def _process_batch(
     *,
     persist: bool = True,
     derived_metrics: DerivedMetrics | None = None,
+    stats: DrainStats | None = None,
 ) -> bool:
     """
     Process up to `batch_size` entries for a group. Updates derived in place.
@@ -199,6 +207,9 @@ def _process_batch(
             pipeline_hash=p.pipeline_hash,
         )
         raise
+
+    if stats is not None:
+        stats.entries += len(entries)
 
     last = entries[-1]
     last_date = last.date_added
@@ -270,6 +281,7 @@ def _drain_log(
     time_limit: timedelta,
     persist: bool = True,
     derived_metrics: DerivedMetrics | None = None,
+    stats: DrainStats | None = None,
 ) -> bool:
     """Process pending log entries into *derived*, batching as needed.
 
@@ -281,7 +293,12 @@ def _drain_log(
     """
     deadline = time.monotonic() + time_limit.total_seconds()
     while _process_batch(
-        pipeline, derived, batch_size, persist=persist, derived_metrics=derived_metrics
+        pipeline,
+        derived,
+        batch_size,
+        persist=persist,
+        derived_metrics=derived_metrics,
+        stats=stats,
     ):
         if time.monotonic() >= deadline:
             return False
